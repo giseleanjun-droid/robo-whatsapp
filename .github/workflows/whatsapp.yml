@@ -93,10 +93,6 @@ jobs:
         id: wa
         run: node enviar.mjs
 
-      - name: E-mail com o código de pareamento
-        if: always() && env.MODO == 'parear'
-        run: python relatorio.py codigo
-
       - name: E-mail com o resumo
         if: always() && env.MODO != 'parear'
         run: python relatorio.py envio
