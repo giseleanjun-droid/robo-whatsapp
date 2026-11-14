@@ -1,0 +1,6 @@
+# bibliotecas do robo na nuvem (GitHub Actions) - versao API, sem navegador
+pandas>=2.2
+openpyxl>=3.1
+requests>=2.32
+google-api-python-client>=2.130
+google-auth>=2.30

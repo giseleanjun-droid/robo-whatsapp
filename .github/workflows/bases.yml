@@ -1,0 +1,51 @@
+name: Planilhas das bases
+
+# Grava a planilha de cada base ("<BASE> - SLA + BACKLOG") logo depois das rodadas do robô privado
+# (04h completo, 14h e 19h só Backlog). Repositório público: minutos ilimitados.
+on:
+  schedule:
+    - cron: "20 8 * * *"      # 05:20 Brasília (depois da rodada das 04h)
+    - cron: "50 17 * * *"     # 14:50 Brasília (depois da rodada das 14h)
+    - cron: "50 22 * * 1-5"   # 19:50 Brasília (depois da rodada das 19h)
+  workflow_dispatch:
+    inputs:
+      so_bases:
+        description: "Opcional: só estas bases (ex.: GO-W-D001 AC-W-D002)"
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bases
+  cancel-in-progress: false
+
+jobs:
+  gravar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      TZ: America/Sao_Paulo
+      DRIVE_TOKEN: /tmp/segredos/sa.json
+      PASTA_SLA: ${{ secrets.PASTA_SLA }}
+      SO_BASES: ${{ github.event.inputs.so_bases || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Instalar bibliotecas
+        run: pip install --quiet -r requirements.txt
+      - name: Preparar segredos
+        env:
+          SA_JSON: ${{ secrets.DRIVE_TOKEN_JSON }}
+        run: |
+          mkdir -p /tmp/segredos
+          printf '%s' "$SA_JSON" > /tmp/segredos/sa.json
+          chmod 600 /tmp/segredos/*
+      - name: Gravar as planilhas das bases
+        run: python -u bases.py
+      - name: Apagar segredos
+        if: always()
+        run: rm -rf /tmp/segredos

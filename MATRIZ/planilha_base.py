@@ -1,0 +1,270 @@
+# -*- coding: utf-8 -*-
+"""
+planilha_base.py - a planilha de UMA base (SLA + BACKLOG num arquivo só), no visual das antigas:
+
+  📊 SLA RESULTADOS     painel de gestão (cards, gestão do dia, acumulado, dia a dia, motoristas, cidades)
+  📋 SLA PACOTES        lista única: coluna 1 = 🔴 ATRASADO / 🟡 HOJE / 🟢 AMANHÃ / 🔵 SEMANA,
+                        PRAZO BASE em destaque, linhas do TIKTOK destacadas
+  📦 BACKLOG RESULTADOS painel de risco (total, perda, categorias, tempo parado, situação, motoristas)
+  🚨 BACKLOG PACOTES    lista única: coluna 1 = 🚨 VENCIDO / 💸 PERDA / 🏍️ ROTA / 📦 ESTOQUE / 🌍 OUTRA REGIÃO
+"""
+import datetime as dt
+
+import numpy as np
+import pandas as pd
+from openpyxl import Workbook
+from openpyxl.formatting.rule import FormulaRule
+from openpyxl.styles import Alignment, Font
+
+import motor
+from matriz import (_escrever, _semaforo, _texto_regras, FILL, ESCURO, BRANCO, VERDE, AMARELO, VERMELHO,
+                    CINZA, F_PCT, F_INT, F_RS, F_DATA_H, F_DATA)
+from openpyxl.utils import get_column_letter
+
+COR_TK = "000000"
+
+
+def _cor_sla(v):
+    if v is None or (isinstance(v, float) and np.isnan(v)):
+        return CINZA
+    return VERDE if v >= 0.98 else (AMARELO if v >= 0.8 else VERMELHO)
+
+
+def _pct(v):
+    return "—" if v is None or (isinstance(v, float) and np.isnan(v)) else f"{v * 100:.1f}%".replace(".", ",")
+
+
+def _bloco(ws, lin, titulo, cab, linhas, cor=ESCURO, formatos=None):
+    """Título + cabeçalho + linhas a partir da coluna A. Devolve a próxima linha livre."""
+    ws.cell(lin, 1, titulo).font = Font(bold=True, size=12)
+    for j, c in enumerate(cab, 1):
+        x = ws.cell(lin + 1, j, c)
+        x.fill, x.font = FILL(cor), Font(bold=True, color=BRANCO)
+        x.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for i, r in enumerate(linhas, lin + 2):
+        for j, v in enumerate(r, 1):
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                continue
+            c = ws.cell(i, j, v.item() if hasattr(v, "item") else v)
+            c.alignment = Alignment(horizontal="center" if j > 1 else "left")
+            if formatos and j in formatos:
+                c.number_format = formatos[j]
+    return lin + len(linhas) + 3
+
+
+def _card(ws, lin, col, texto, cor):
+    ws.merge_cells(start_row=lin, start_column=col, end_row=lin + 1, end_column=col + 1)
+    c = ws.cell(lin, col, texto)
+    c.fill, c.font = FILL(cor), Font(bold=True, size=13)
+    c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+
+# ------------------------------------------------------------------ SLA
+def aba_sla_resultados(wb, base, S, carimbo):
+    ws = wb.active
+    ws.title = "📊 SLA RESULTADOS"
+    ws.sheet_view.showGridLines = False
+    ws.cell(1, 1, carimbo).font = Font(size=8, color="666666")
+    bs = S["bases"]
+    if base not in set(bs["base"]):
+        ws.cell(3, 1, "Sem pacotes de SLA desta base no mês.")
+        return
+    k = bs[bs["base"] == base].iloc[0]
+    eb = S["emb_base"][S["emb_base"]["base"] == base].set_index("emb")
+    e = lambda emb, c: eb.at[emb, c] if emb in eb.index else 0
+
+    _card(ws, 2, 1, f"SLA MÊS ANJUN\n{_pct(k['sla_a_mes'])}", _cor_sla(k["sla_a_mes"]))
+    _card(ws, 2, 3, f"SLA MÊS BASE\n{_pct(k['sla_b_mes'])}", _cor_sla(k["sla_b_mes"]))
+    for i, emb in enumerate(motor.DESTAQUES):
+        a = eb.at[emb, "sla_a_mes"] if emb in eb.index else np.nan
+        b = eb.at[emb, "sla_b_mes"] if emb in eb.index else np.nan
+        _card(ws, 2, 5 + i * 2, f"{emb} · SLA MÊS\nAnjun {_pct(a)} · Base {_pct(b)}", _cor_sla(a))
+    lin = 5
+
+    dia = f"{S['hoje']:%d/%m}"
+    cab = [dia, "PACOTES DO DIA (ANJUN)", "✅ SUCESSO", "❌ FALHA", "📦 BACKLOG", "🔴 ATRASADO", "🟡 HOJE",
+           "🟢 AMANHÃ", "🔵 SEMANA", "🏢 NA BASE", "🏍️ EM ROTA", "🚨 +7 DIAS"]
+    linhas = [["GERAL", k["dem_hoje"], k["suc_hoje"], k["dem_hoje"] - k["suc_hoje"], k["backlog"], k["atrasado"], k["hoje"],
+               k["amanha"], k["semana"], k["na_base"], k["em_rota"], k["extravio"]]]
+    for emb in motor.DESTAQUES:
+        linhas.append([emb, e(emb, "dem_hoje"), e(emb, "suc_hoje"), e(emb, "dem_hoje") - e(emb, "suc_hoje"), e(emb, "backlog"),
+                       e(emb, "atrasado"), e(emb, "hoje"), e(emb, "amanha"), e(emb, "semana"), e(emb, "na_base"),
+                       e(emb, "em_rota"), e(emb, "extravio")])
+    lin = _bloco(ws, lin, "Gestão do dia da Base 🚀", cab, linhas)
+
+    cab = ["TOTAL", "PACOTES DO MÊS (ANJUN)", "✅ SUCESSO", "❌ FALHA", "SLA ANJUN", "SLA BASE", "SLA ANJUN ONTEM",
+           "SLA BASE ONTEM", "CHEGOU VENCIDO"]
+    linhas = [["GERAL", k["dem_mes"], k["suc_mes"], k["dem_mes"] - k["suc_mes"], k["sla_a_mes"], k["sla_b_mes"],
+               k["sla_a_ontem"], k["sla_b_ontem"], k["cv_mes"]]]
+    for emb in motor.DESTAQUES:
+        if emb in eb.index:
+            r = eb.loc[emb]
+            linhas.append([emb, r["dem_mes"], r["suc_mes"], r["dem_mes"] - r["suc_mes"], r["sla_a_mes"], r["sla_b_mes"],
+                           r["sla_a_ontem"], r["sla_b_ontem"], r["cv_mes"]])
+    ini = lin + 2
+    lin = _bloco(ws, lin, "Acumulado do mês 🚀", cab, linhas, formatos={5: F_PCT, 6: F_PCT, 7: F_PCT, 8: F_PCT})
+    _semaforo(ws, f"E{ini}:H{ini + len(linhas) - 1}")
+
+    # dia a dia
+    d = S["diario"]
+    d = d[d["base"] == base].set_index("dia")
+    dias = list(range(1, S["hoje"].day + 1))
+    g = lambda c, x: (d.at[x, c] if (x in d.index and c in d.columns) else 0)
+    def taxa(a, b, x):
+        return (g(a, x) / g(b, x)) if g(b, x) else None
+    linhas = [["SLA Anjun %"] + [taxa("suc", "dem", x) for x in dias],
+              ["SLA Base %"] + [taxa("sucb", "demb", x) for x in dias]]
+    for emb in motor.DESTAQUES:
+        linhas.append([f"{emb} · SLA Anjun %"] + [taxa(f"suc_{emb}", f"dem_{emb}", x) for x in dias])
+        linhas.append([f"{emb} · SLA Base %"] + [taxa(f"sucb_{emb}", f"demb_{emb}", x) for x in dias])
+    n_pct = len(linhas)
+    for rot, c in [("Pacotes do dia SLA Anjun", "dem"), ("Não entregues SLA Anjun", None), ("Entregue (Baixas)", "entregue"),
+                   ("Recebido", "recebido"), (f"Recebido após {motor.HORA_CORTE:02d}h", "recebido_apos9"),
+                   ("Chegou atrasado do dia", "chegou_atrasado"), ("Pacotes com problema", "problema")]:
+        if c is None:
+            linhas.append([rot] + [(g("dem", x) - g("suc", x)) or None for x in dias])
+        else:
+            linhas.append([rot] + [g(c, x) or None for x in dias])
+    ini = lin + 2
+    cab = ["DIA A DIA (Meta 98%)"] + [f"{x:02d}/{S['hoje'].month:02d}" for x in dias]
+    lin = _bloco(ws, lin, "Dia a dia performance SLA 🚀", cab, linhas)
+    for i in range(ini, ini + n_pct):
+        for j in range(2, len(dias) + 2):
+            ws.cell(i, j).number_format = "0%"
+        _semaforo(ws, f"B{i}:{get_column_letter(len(dias) + 1)}{i}")
+
+    # motoristas e cidades
+    m = S["motoristas"]
+    m = m[(m["base"] == base) & ((m["entregues"] > 0) | (m["backlog"] > 0))].sort_values("fora_b", ascending=False).head(20)
+    cab = ["MOTORISTA", "VALOR ABERTO", "ENTREGUES", "SLA ANJUN %", "SLA BASE %", "BACKLOG", "ATRASADOS",
+           "TIKTOK ENTREGUES", "TIKTOK BACKLOG"]
+    linhas = m[["motorista", "valor_aberto", "entregues", "sla_a", "sla_b", "backlog", "atrasado",
+                "TIKTOK_entregues", "TIKTOK_backlog"]].values.tolist()
+    ini = lin + 2
+    lin = _bloco(ws, lin, "🚚 MOTORISTAS OFENSORES EM SLA BASE (volume)", cab, linhas, formatos={2: F_RS, 4: F_PCT, 5: F_PCT})
+    if linhas:
+        _semaforo(ws, f"D{ini}:E{ini + len(linhas) - 1}")
+    c = S["cidades"]
+    c = c[(c["base"] == base) & ((c["entregues"] > 0) | (c["backlog"] > 0))].copy()
+    c["fails"] = c["fora_a"] + c["fora_b"]
+    c = c.sort_values("fails", ascending=False).head(15)
+    cab = ["CIDADE", "ENTREGUES", "SLA ANJUN %", "SLA BASE %", "BACKLOG", "ATRASADOS", "CHEGOU VENCIDO", "FAILS TOTAIS"]
+    linhas = c[["cidade", "entregues", "sla_a", "sla_b", "backlog", "atrasado", "chegou_vencido", "fails"]].values.tolist()
+    ini = lin + 2
+    _bloco(ws, lin, "🏙️ CIDADES OFENSORAS SLA BASE e ANJUN", cab, linhas, formatos={3: F_PCT, 4: F_PCT})
+    if linhas:
+        _semaforo(ws, f"C{ini}:D{ini + len(linhas) - 1}")
+    ws.column_dimensions["A"].width = 30
+    for j in range(2, 40):
+        ws.column_dimensions[get_column_letter(j)].width = 12
+
+
+def aba_sla_pacotes(wb, base, S, carimbo):
+    ws = wb.create_sheet("📋 SLA PACOTES")
+    l = S["lista"]
+    l = l[l["BASE"] == base].drop(columns=[c for c in l.columns if c.startswith("_")] + ["UF", "BASE"])
+    cont = l["PRAZO ANJUN"].value_counts()
+    ws.cell(1, 1, f"{carimbo}  ·  🔴 {cont.get(motor.PZ_ATRASADO, 0)} atrasado · 🟡 {cont.get(motor.PZ_HOJE, 0)} hoje · "
+                  f"🟢 {cont.get(motor.PZ_AMANHA, 0)} amanhã · 🔵 {cont.get(motor.PZ_SEMANA, 0)} semana  ·  "
+                  f"TIKTOK em destaque (preto)").font = Font(size=9, bold=True)
+    ws.sheet_view.showGridLines = False
+    if l.empty:
+        ws.cell(3, 1, "Zerado! ✅")
+        return
+    _escrever(ws, l, formatos={"Valor": F_RS, "Recebido na base": F_DATA_H, "Data Custódia": F_DATA_H,
+                               "Data Anjun": F_DATA_H, "Data Base": F_DATA, "Reg. Ocorrência": F_DATA_H},
+              larguras={"Waybill": 20, "Motivo": 32, "Motorista": 22, "Cidade": 20, "VALIDAÇÃO": 22})
+    n = len(l) + 2
+    cols = list(l.columns)
+    L = lambda nome: get_column_letter(cols.index(nome) + 1)
+    _texto_regras(ws, f"A3:B{n}", [("ATRASADO", "CC0000", BRANCO), ("HOJE", "FF9900", None),
+                                   ("AMANH", "D9EAD3", None), ("SEMANA", "CFE2F3", None)])
+    # PRAZO BASE em destaque (borda laranja clara) e linhas TIKTOK em preto
+    for i in range(3, n + 1):
+        ws.cell(i, cols.index("PRAZO BASE") + 1).font = Font(bold=True)
+    emb = L("Embarcador")
+    ws.conditional_formatting.add(f"C3:{get_column_letter(len(cols))}{n}", FormulaRule(
+        formula=[f'${emb}3="{motor.PRIORIDADE}"'], fill=FILL(COR_TK), font=Font(color=BRANCO, bold=True)))
+    _texto_regras(ws, f"A3:A{n}", [("EXTRAVIADO", "000000", BRANCO)])
+
+
+# ------------------------------------------------------------------ BACKLOG
+def aba_bl_resultados(wb, base, B, carimbo):
+    ws = wb.create_sheet("📦 BACKLOG RESULTADOS")
+    ws.sheet_view.showGridLines = False
+    ws.cell(1, 1, carimbo).font = Font(size=8, color="666666")
+    bb = B["bases"]
+    if base not in set(bb["base"]):
+        ws.cell(3, 1, "Backlog zerado! ✅")
+        return
+    k = bb[bb["base"] == base].iloc[0]
+    ws.merge_cells("A2:D3")
+    c = ws.cell(2, 1, f"BACKLOG TOTAL: {int(k['total'])}")
+    c.fill, c.font = FILL(ESCURO if k["total"] else "34A853"), Font(bold=True, size=22, color=BRANCO)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.merge_cells("A5:D5")
+    c = ws.cell(5, 1, f"💸 PERDA CONFIRMADA = R$ {k['valor_perdas']:,.2f}  ({int(k['perdas'])} pacotes)"
+                .replace(",", "X").replace(".", ",").replace("X", "."))
+    c.font, c.alignment = Font(bold=True, color="CC0000", size=12), Alignment(horizontal="center")
+    lin = 7
+    lin = _bloco(ws, lin, "STATUS ATUAL", ["CATEGORIA", "QTD", "VALOR (Est.)"],
+                 [["🏍️ EM ROTA", k["rota"], k["valor_rota"]], ["📦 ESTOQUE", k["estoque"], k["valor_estoque"]],
+                  ["🌍 OUTRA REGIÃO", k["outra_regiao"], k["valor_outra"]], ["⚠️ OUTROS", k["outros"], k["valor_outros"]]],
+                 formatos={3: F_RS})
+    ini = lin + 2
+    lin = _bloco(ws, lin, "TEMPO PARADO", ["TEMPO PARADO", "QTD", "STATUS"],
+                 [["> 7 DIAS", k["age_mais7"], "EXTRAVIO?"], ["7 DIAS", k["age7"], "CRÍTICO"], ["6 DIAS", k["age6"], "CRÍTICO"],
+                  ["5 DIAS", k["age5"], "ATENÇÃO"], ["4 DIAS", k["age4"], "ATENÇÃO"], ["3 DIAS", k["age3"], "ATENÇÃO"],
+                  ["2 DIAS", k["age2"], "ATENÇÃO"], ["1 DIA", k["age1"], "NORMAL"]])
+    for off, cor, fonte in [(0, "000000", BRANCO), (1, "FF9900", None), (2, "FF9900", None), (3, "F1C232", None),
+                            (4, "F1C232", None), (5, "F1C232", None), (6, "F1C232", None), (7, "34A853", BRANCO)]:
+        for j in range(1, 4):
+            ws.cell(ini + off, j).fill = FILL(cor)
+            if fonte:
+                ws.cell(ini + off, j).font = Font(color=fonte, bold=True)
+    ini = lin + 2
+    lin = _bloco(ws, lin, "SITUAÇÃO", ["SITUAÇÃO", "QTD", "STATUS"],
+                 [["🔥 VENCIDOS", k["vencidos"], "URGENTE"], ["⚠️ VENCE HOJE", k["vence_hoje"], "PRIORIDADE"],
+                  ["📦 NO PRAZO", k["no_prazo"], "CONTROLADO"], ["🏴‍☠️ EXTRAVIO (+7d)", k["extravio"], "INVESTIGAR"]])
+    for off, cor, fonte in [(0, "CC0000", BRANCO), (1, "FF9900", None), (2, "34A853", BRANCO), (3, "000000", BRANCO)]:
+        for j in range(1, 4):
+            ws.cell(ini + off, j).fill = FILL(cor)
+            if fonte:
+                ws.cell(ini + off, j).font = Font(color=fonte, bold=True)
+    of = B["ofensores"]
+    of = of[of["base"] == base].head(10)
+    _bloco(ws, lin, "MOTORISTAS (ROTA)", ["MOTORISTA", "QTD", "VALOR"], of[["motorista", "qtd", "valor"]].values.tolist(),
+           formatos={3: F_RS})
+    for col, w in zip("ABCD", (30, 14, 16, 14)):
+        ws.column_dimensions[col].width = w
+
+
+def aba_bl_pacotes(wb, base, B, carimbo):
+    ws = wb.create_sheet("🚨 BACKLOG PACOTES")
+    l = B["lista"]
+    l = l[l["BASE"] == base].drop(columns=["UF", "BASE"])
+    cont = l["ALERTA"].value_counts()
+    ws.cell(1, 1, f"{carimbo}  ·  " + " · ".join(f"{a} {cont.get(a, 0)}" for a in motor.ORDEM_AL if cont.get(a, 0))
+            ).font = Font(size=9, bold=True)
+    ws.sheet_view.showGridLines = False
+    if l.empty:
+        ws.cell(3, 1, "Zerado! ✅")
+        return
+    _escrever(ws, l, formatos={"Valor": F_RS, "Recebido na base": F_DATA_H, "Data Custódia": F_DATA_H,
+                               "SLA Anjun": F_DATA_H, "SLA Base": F_DATA_H, "Reg. Ocorrência": F_DATA_H},
+              larguras={"ALERTA": 22, "Waybill": 20, "Motivo": 34, "Motorista": 22, "Cidade": 20, "VALIDAÇÃO": 22})
+    n = len(l) + 2
+    _texto_regras(ws, f"A3:A{n}", [("VENCIDO", "CC0000", BRANCO), ("PERDA", "000000", BRANCO), ("ROTA", "CFE2F3", None),
+                                   ("ESTOQUE", "FFF2CC", None), ("OUTRA", "EAD1DC", None)])
+    _texto_regras(ws, f"B3:B{n}", [("EXTRAVIADO", "000000", BRANCO), ("ATRASADO", "CC0000", BRANCO), ("HOJE", "FF9900", None)])
+
+
+def gerar(base, S, B, destino):
+    carimbo = f"📅 SLA atualizado {S['hoje']:%d/%m %H:%M} · Backlog atualizado {B['hoje']:%d/%m %H:%M}"
+    wb = Workbook()
+    aba_sla_resultados(wb, base, S, carimbo)
+    aba_sla_pacotes(wb, base, S, carimbo)
+    aba_bl_resultados(wb, base, B, carimbo)
+    aba_bl_pacotes(wb, base, B, carimbo)
+    wb.save(destino)
+    return destino

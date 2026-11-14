@@ -54,7 +54,7 @@ jobs:
       - name: Instalar bibliotecas
         run: |
           npm install --no-audit --no-fund --silent
-          pip install --quiet pandas google-auth requests
+          pip install --quiet -r requirements.txt
 
       - name: Preparar segredos
         env:
