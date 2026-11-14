@@ -21,7 +21,22 @@ from matriz import (_escrever, _semaforo, _texto_regras, FILL, ESCURO, BRANCO, V
                     CINZA, F_PCT, F_INT, F_RS, F_DATA_H, F_DATA)
 from openpyxl.utils import get_column_letter
 
-COR_TK = "000000"
+COR_TK = "CC0000"   # TIKTOK: só a célula do embarcador, em vermelho
+
+
+def _centralizar(ws, ini, fim, ncols):
+    """Tudo centralizado (pedido da Gisele); o texto não quebra linha para a lista ficar compacta."""
+    al = Alignment(horizontal="center", vertical="center")
+    for row in ws.iter_rows(min_row=ini, max_row=fim, max_col=ncols):
+        for c in row:
+            c.alignment = al
+
+
+def _tiktok_vermelho(ws, cols, n):
+    """Só a célula 'TIKTOK' da coluna Embarcador fica vermelha (antes a linha inteira ficava preta)."""
+    L = get_column_letter(cols.index("Embarcador") + 1)
+    ws.conditional_formatting.add(f"{L}3:{L}{n}", FormulaRule(
+        formula=[f'{L}3="{motor.PRIORIDADE}"'], fill=FILL(COR_TK), font=Font(color=BRANCO, bold=True)))
 
 
 def _cor_sla(v):
@@ -46,7 +61,7 @@ def _bloco(ws, lin, titulo, cab, linhas, cor=ESCURO, formatos=None):
             if v is None or (isinstance(v, float) and np.isnan(v)):
                 continue
             c = ws.cell(i, j, v.item() if hasattr(v, "item") else v)
-            c.alignment = Alignment(horizontal="center" if j > 1 else "left")
+            c.alignment = Alignment(horizontal="center", vertical="center")
             if formatos and j in formatos:
                 c.number_format = formatos[j]
     return lin + len(linhas) + 3
@@ -166,7 +181,7 @@ def aba_sla_pacotes(wb, base, S, carimbo):
     cont = l["PRAZO ANJUN"].value_counts()
     ws.cell(1, 1, f"{carimbo}  ·  🔴 {cont.get(motor.PZ_ATRASADO, 0)} atrasado · 🟡 {cont.get(motor.PZ_HOJE, 0)} hoje · "
                   f"🟢 {cont.get(motor.PZ_AMANHA, 0)} amanhã · 🔵 {cont.get(motor.PZ_SEMANA, 0)} semana  ·  "
-                  f"TIKTOK em destaque (preto)").font = Font(size=9, bold=True)
+                  f"TIKTOK em vermelho").font = Font(size=9, bold=True)
     ws.sheet_view.showGridLines = False
     if l.empty:
         ws.cell(3, 1, "Zerado! ✅")
@@ -176,16 +191,11 @@ def aba_sla_pacotes(wb, base, S, carimbo):
               larguras={"Waybill": 20, "Motivo": 32, "Motorista": 22, "Cidade": 20, "VALIDAÇÃO": 22})
     n = len(l) + 2
     cols = list(l.columns)
-    L = lambda nome: get_column_letter(cols.index(nome) + 1)
+    _centralizar(ws, 3, n, len(cols))
+    # cor só nos avisos: prazo (Anjun e Base) e a célula TIKTOK
     _texto_regras(ws, f"A3:B{n}", [("ATRASADO", "CC0000", BRANCO), ("HOJE", "FF9900", None),
                                    ("AMANH", "D9EAD3", None), ("SEMANA", "CFE2F3", None)])
-    # PRAZO BASE em destaque (borda laranja clara) e linhas TIKTOK em preto
-    for i in range(3, n + 1):
-        ws.cell(i, cols.index("PRAZO BASE") + 1).font = Font(bold=True)
-    emb = L("Embarcador")
-    ws.conditional_formatting.add(f"C3:{get_column_letter(len(cols))}{n}", FormulaRule(
-        formula=[f'${emb}3="{motor.PRIORIDADE}"'], fill=FILL(COR_TK), font=Font(color=BRANCO, bold=True)))
-    _texto_regras(ws, f"A3:A{n}", [("EXTRAVIADO", "000000", BRANCO)])
+    _tiktok_vermelho(ws, cols, n)
 
 
 # ------------------------------------------------------------------ BACKLOG
@@ -244,7 +254,9 @@ def aba_bl_pacotes(wb, base, B, carimbo):
     l = B["lista"]
     l = l[l["BASE"] == base].drop(columns=["UF", "BASE"])
     cont = l["ALERTA"].value_counts()
-    ws.cell(1, 1, f"{carimbo}  ·  " + " · ".join(f"{a} {cont.get(a, 0)}" for a in motor.ORDEM_AL if cont.get(a, 0))
+    onde = l["ONDE ESTÁ"].value_counts()
+    ws.cell(1, 1, f"{carimbo}  ·  " + " · ".join(f"{a} {cont.get(a, 0)}" for a in motor.ORDEM_AL if cont.get(a, 0)) +
+            "  |  ONDE ESTÁ: " + " · ".join(f"{a} {onde.get(a, 0)}" for a in motor.ORDEM_AL if onde.get(a, 0))
             ).font = Font(size=9, bold=True)
     ws.sheet_view.showGridLines = False
     if l.empty:
@@ -252,11 +264,14 @@ def aba_bl_pacotes(wb, base, B, carimbo):
         return
     _escrever(ws, l, formatos={"Valor": F_RS, "Recebido na base": F_DATA_H, "Data Custódia": F_DATA_H,
                                "SLA Anjun": F_DATA_H, "SLA Base": F_DATA_H, "Reg. Ocorrência": F_DATA_H},
-              larguras={"ALERTA": 22, "Waybill": 20, "Motivo": 34, "Motorista": 22, "Cidade": 20, "VALIDAÇÃO": 22})
+              larguras={"ALERTA": 22, "ONDE ESTÁ": 18, "Waybill": 20, "Motivo": 34, "Motorista": 22, "Cidade": 20, "VALIDAÇÃO": 22})
     n = len(l) + 2
-    _texto_regras(ws, f"A3:A{n}", [("VENCIDO", "CC0000", BRANCO), ("PERDA", "000000", BRANCO), ("ROTA", "CFE2F3", None),
-                                   ("ESTOQUE", "FFF2CC", None), ("OUTRA", "EAD1DC", None)])
-    _texto_regras(ws, f"B3:B{n}", [("EXTRAVIADO", "000000", BRANCO), ("ATRASADO", "CC0000", BRANCO), ("HOJE", "FF9900", None)])
+    cols = list(l.columns)
+    _centralizar(ws, 3, n, len(cols))
+    # cor só nos avisos: a coluna ALERTA e a célula TIKTOK
+    _texto_regras(ws, f"A3:A{n}", [("VENCIDO", "CC0000", BRANCO), ("PERDA", "000000", BRANCO)])
+    _texto_regras(ws, f"B3:B{n}", [("ROTA", "CFE2F3", None), ("ESTOQUE", "FFF2CC", None), ("OUTRA", "EAD1DC", None)])
+    _tiktok_vermelho(ws, cols, n)
 
 
 def gerar(base, S, B, destino):

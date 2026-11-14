@@ -46,6 +46,7 @@ REGRAS_EMB = [   # iguais ao Embarcadores.gs / evolucao_mensal.py: 1ª coluna qu
 
 # rótulos (coluna 1 das listas)
 PZ_ATRASADO, PZ_HOJE, PZ_AMANHA, PZ_SEMANA = "🔴 ATRASADO", "🟡 HOJE", "🟢 AMANHÃ", "🔵 SEMANA"
+AL_NO_PRAZO = "✅ NO PRAZO"
 AL_PERDA, AL_URGENTE, AL_ROTA, AL_ESTOQUE, AL_OUTRA, AL_OUTROS = (
     "💸 PERDA CONFIRMADA", "🚨 VENCIDO - URGENTE", "🏍️ EM ROTA", "📦 ESTOQUE", "🌍 OUTRA REGIÃO", "⚠️ OUTROS")
 
@@ -391,10 +392,10 @@ def _lista_sla(t):
 
 
 # ================================================================ BACKLOG
-COLS_LISTA_BL = ["ALERTA", "VALIDAÇÃO", "UF", "BASE", "Waybill", "Embarcador", "Status / Local", "Motorista", "Cidade",
+COLS_LISTA_BL = ["ALERTA", "ONDE ESTÁ", "VALIDAÇÃO", "UF", "BASE", "Waybill", "Embarcador", "Status / Local", "Motorista", "Cidade",
                  "Dias Parado", "Valor", "Recebido na base", "Data Custódia", "SLA Anjun", "SLA Base",
                  "Reg. Ocorrência", "Registrante", "Motivo", "Tent.", "Rest."]
-ORDEM_AL = {AL_URGENTE: 0, AL_PERDA: 1, AL_ROTA: 2, AL_ESTOQUE: 3, AL_OUTRA: 4, AL_OUTROS: 5}
+ORDEM_AL = {AL_URGENTE: 0, AL_PERDA: 1, AL_NO_PRAZO: 2, AL_ROTA: 3, AL_ESTOQUE: 4, AL_OUTRA: 5, AL_OUTROS: 6}
 
 
 def calcular_backlog(df, hoje=None):
@@ -448,24 +449,26 @@ def calcular_backlog(df, hoje=None):
     pc = t[vivo].groupby(["uf", "base", "cidade"]).agg(
         prazo=("d_sla", lambda x: int(x.mode().iloc[0])), qtd=("waybill", "size")).reset_index()
 
-    # ---- lista única com ALERTA
-    al = pd.Series(AL_OUTROS, index=t.index, dtype="string")
-    al[t["categoria"] == "OUTRA REGIÃO"] = AL_OUTRA
-    al[t["categoria"] == "ESTOQUE"] = AL_ESTOQUE
-    al[t["categoria"] == "ROTA"] = AL_ROTA
+    # ---- lista única: cada AJ uma vez só. ALERTA = urgência; ONDE ESTÁ = local do pacote (não se repete)
+    onde = pd.Series(AL_OUTROS, index=t.index, dtype="string")
+    onde[t["categoria"] == "OUTRA REGIÃO"] = AL_OUTRA
+    onde[t["categoria"] == "ESTOQUE"] = AL_ESTOQUE
+    onde[t["categoria"] == "ROTA"] = AL_ROTA
+    al = pd.Series(AL_NO_PRAZO, index=t.index, dtype="string")
     al[(dias > DIAS_EXTRAVIO) | venc] = AL_URGENTE
     al[t["perda"]] = AL_PERDA
     motivo = t["motivo"].where(t["motivo"] != "", None)
     venc_dias = (-t["pz_diff"]).where(venc, 0).fillna(0).astype(int)
     motivo = motivo.where(~(t["perda"] & motivo.isna()), "Vencido há " + venc_dias.astype(str) + " dias (perda por tempo)")
     lista = pd.DataFrame({
-        "ALERTA": al, "VALIDAÇÃO": t["validacao"], "UF": t["uf"], "BASE": t["base"], "Waybill": t["waybill"],
+        "ALERTA": al, "ONDE ESTÁ": onde, "VALIDAÇÃO": t["validacao"], "UF": t["uf"], "BASE": t["base"], "Waybill": t["waybill"],
         "Embarcador": t["emb"], "Status / Local": t["status"], "Motorista": t["motorista"], "Cidade": t["cidade"],
         "Dias Parado": dias, "Valor": t["valor"], "Recebido na base": t["entrada"], "Data Custódia": t["custodia"],
         "SLA Anjun": t["prazo"], "SLA Base": t["prazo_b"], "Reg. Ocorrência": t["ocorrencia"],
         "Registrante": t["registrante"], "Motivo": motivo, "Tent.": t["tent"], "Rest.": t["rest"],
     })
     lista["_o"] = lista["ALERTA"].map(ORDEM_AL)
-    lista = lista.sort_values(["BASE", "_o", "Dias Parado"], ascending=[True, True, False]).drop(columns="_o")
+    lista["_l"] = lista["ONDE ESTÁ"].map(ORDEM_AL)
+    lista = lista.sort_values(["BASE", "_o", "_l", "Dias Parado"], ascending=[True, True, True, False]).drop(columns=["_o", "_l"])
     return {"bases": bases, "ofensores": ofensores, "prazos_cidades": pc,
             "lista": lista.reset_index(drop=True), "hoje": hoje, "linhas_bd": len(df)}

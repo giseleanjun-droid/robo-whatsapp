@@ -28,6 +28,7 @@ F_PCT, F_INT, F_RS = "0.0%", "#,##0", '"R$" #,##0.00'
 F_DATA_H, F_DATA = "dd/mm/yyyy hh:mm", "dd/mm/yyyy"
 FILL = lambda c: PatternFill("solid", start_color=c, end_color=c)
 FINO = Side(style="thin", color="D0D0D0")
+CENTRO = Alignment(horizontal="center", vertical="center")
 
 COLS_HIST = ["data", "uf", "base", "sla_a_ontem", "sla_b_ontem", "sla_a_mes", "sla_b_mes", "atrasado", "hoje",
              "bl_total", "bl_valor", "bl_extravio", "bl_vencidos", "bl_perdas", "bl_valor_perdas", "tiktok_aberto"]
@@ -58,7 +59,7 @@ def _escrever(ws, df, linha_cab=2, cor=ESCURO, formatos=None, larguras=None, fil
                 v = float(v)
             elif isinstance(v, (np.bool_,)):
                 v = bool(v)
-            ws.cell(i, j, v)
+            ws.cell(i, j, v).alignment = CENTRO
     ult = linha_cab + len(df)
     for nome, fmt in (formatos or {}).items():
         if nome in cols:

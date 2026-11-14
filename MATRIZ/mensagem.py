@@ -134,5 +134,5 @@ def _bloco_tiktok(k, lista, ontem_txt):
                 m += f"{marca(x)} {x['waybill']} · {x['cidade']}{mot}\n"
             usadas += 1
     if len(lista) > MAX_AJ:
-        m += f"… e mais {len(lista) - MAX_AJ} na sua planilha (aba 📋 SLA PACOTES, linhas pretas = TikTok)\n"
+        m += f"… e mais {len(lista) - MAX_AJ} na sua planilha (aba 📋 SLA PACOTES, TikTok em vermelho)\n"
     return m + "🔴 atrasado · 🟡 vence hoje · ⚠️ +7 dias parado\n\n"
