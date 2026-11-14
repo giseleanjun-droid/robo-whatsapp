@@ -11,9 +11,9 @@ on:
       modo:
         description: "enviar | grupos (só confere os grupos, não envia) | parear (conectar o WhatsApp)"
         default: "enviar"
-      grupo_teste:
-        description: "Nome de um grupo de TESTE: se preenchido, todas as mensagens vão só para ele"
-        default: ""
+      teste:
+        description: "sim = TODAS as mensagens vão só para o grupo de teste (segredo WA_GRUPO_TESTE)"
+        default: "nao"
       so_bases:
         description: "Opcional: só estas bases (ex.: GO-W-D001 GO-W-D009)"
         default: ""
@@ -32,7 +32,7 @@ jobs:
     env:
       TZ: America/Sao_Paulo
       MODO: ${{ github.event.inputs.modo || 'enviar' }}
-      GRUPO_TESTE: ${{ github.event.inputs.grupo_teste || '' }}
+      GRUPO_TESTE: ${{ github.event.inputs.teste == 'sim' && secrets.WA_GRUPO_TESTE || '' }}
       SO_BASES: ${{ github.event.inputs.so_bases || '' }}
       DRIVE_TOKEN: /tmp/segredos/sa.json
       PASTA_SLA: ${{ secrets.PASTA_SLA }}

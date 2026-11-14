@@ -81,9 +81,19 @@ async function mapaGrupos(sock) {
   return { porNome, total: Object.keys(todos).length };
 }
 
+let jidTeste;
+async function porLink(sock, link) {
+  const cod = String(link || "").trim().split("?")[0].split("/").pop();
+  if (!cod || cod.length < 10) return undefined;
+  try { const info = await sock.groupGetInviteInfo(cod); return info?.id; } catch { return undefined; }
+}
+
 async function jidDoGrupo(sock, item, porNome) {
-  if (GRUPO_TESTE) return porNome.get(norm(GRUPO_TESTE));
-  const cod = (item.link || "").trim().split("/").pop();
+  if (GRUPO_TESTE) {   // aceita o link de convite ou o nome do grupo de teste
+    if (jidTeste === undefined) jidTeste = (await porLink(sock, GRUPO_TESTE)) || porNome.get(norm(GRUPO_TESTE)) || null;
+    return jidTeste || undefined;
+  }
+  const cod = (item.link || "").trim().split("?")[0].split("/").pop();
   if (cod && cod.length >= 10) {
     try { const info = await sock.groupGetInviteInfo(cod); if (info?.id) return info.id; } catch { /* tenta pelo nome */ }
   }

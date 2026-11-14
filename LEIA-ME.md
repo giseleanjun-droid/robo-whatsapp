@@ -35,7 +35,7 @@ O número conectado precisa estar **dentro** do grupo.
 
 ## Testar sem incomodar ninguém
 
-Crie um grupo só seu (ex.: `TESTE ROBO`) e rode o workflow com `grupo_teste = TESTE ROBO`:
+Crie um grupo só seu, grave o link de convite dele no segredo `WA_GRUPO_TESTE` e rode o workflow com `teste = sim`:
 todas as mensagens vão só para esse grupo. Para testar poucas, preencha `so_bases` (ex.: `GO-W-D001`).
 Modo `grupos` só confere quais bases acharam o grupo, sem enviar nada.
 
