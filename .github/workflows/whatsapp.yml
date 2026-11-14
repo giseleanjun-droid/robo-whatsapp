@@ -5,7 +5,7 @@ name: WhatsApp Anjun
 # (a chave WA_CHAVE é um segredo; quem abrir o cache sem ela só vê lixo).
 on:
   schedule:
-    - cron: "47 11 * * 1-5"   # 08:47 de Brasília, seg-sex (o GitHub costuma atrasar alguns minutos)
+    - cron: "47 11 * * *"     # 08:47 de Brasília, TODOS os dias (o GitHub costuma atrasar alguns minutos)
   workflow_dispatch:
     inputs:
       modo:
