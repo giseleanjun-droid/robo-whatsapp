@@ -440,10 +440,17 @@ def aba_tiktok(wb, S, carimbo):
 def aba_whatsapp(wb, msgs, carimbo):
     ws = wb.create_sheet("📲 WHATSAPP")
     _titulo(ws, "📲 MENSAGENS DO DIA — o robô envia às 09h no grupo de cada base", carimbo)
-    out = pd.DataFrame(msgs, columns=["UF", "BASE", "GRUPO WHATSAPP", "LINK DO GRUPO", "MENSAGEM (COPIAR)",
+    out = pd.DataFrame(msgs, columns=["UF", "BASE", "PLANILHA DA BASE", "GRUPO WHATSAPP", "LINK DO GRUPO", "MENSAGEM (COPIAR)",
                                       "SLA ANJUN ONTEM", "SLA BASE ONTEM", "BACKLOG", "PERDAS (R$)"])
     _escrever(ws, out, cor="25D366", formatos={"SLA ANJUN ONTEM": F_PCT, "SLA BASE ONTEM": F_PCT, "PERDAS (R$)": F_RS},
-              larguras={"MENSAGEM (COPIAR)": 70, "GRUPO WHATSAPP": 24, "LINK DO GRUPO": 22})
+              larguras={"MENSAGEM (COPIAR)": 70, "GRUPO WHATSAPP": 24, "LINK DO GRUPO": 22, "PLANILHA DA BASE": 30})
+    jp = list(out.columns).index("PLANILHA DA BASE") + 1
+    for i, url in enumerate(out["PLANILHA DA BASE"], 3):
+        if str(url).startswith("http"):
+            c = ws.cell(i, jp)
+            c.value = f"📄 abrir {out.iloc[i - 3]['BASE']}"
+            c.hyperlink = url
+            c.font = Font(color="1155CC", underline="single")
     j = list(out.columns).index("MENSAGEM (COPIAR)") + 1
     for i in range(3, len(out) + 3):
         ws.cell(i, j).alignment = Alignment(wrap_text=True, vertical="top")
@@ -512,7 +519,7 @@ def montar_mensagens(S, B, hist, grupos=None, links=None):
         ofs = [(r["motorista"], int(r["qtd"]), float(r["valor"])) for r in of[of["base"] == base].head(5).to_dict("records")]
         txt = mensagem.montar(base, data_txt, ontem_txt, s, e, b, ant, lista, ofs, links.get(base))
         g = grupos.get(base, {})
-        msgs.append([base[:2], base, g.get("nome", ""), g.get("link", ""), txt,
+        msgs.append([base[:2], base, links.get(base, "⚠️ planilha não criada"), g.get("nome", ""), g.get("link", ""), txt,
                      (s or {}).get("sla_a_ontem"), (s or {}).get("sla_b_ontem"), (b or {}).get("total"), (b or {}).get("valor_perdas")])
     return msgs
 

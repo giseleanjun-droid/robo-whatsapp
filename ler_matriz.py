@@ -77,7 +77,7 @@ def main():
     if f"SLA: {hoje}" not in carimbo and os.environ.get("IGNORAR_DATA") != "1":
         parar(f"a matriz não é de hoje ({hoje}). Carimbo encontrado: {carimbo.strip()[:80] or 'vazio'}")
 
-    msg = aba(s, fid, "📲 WHATSAPP", "A2:I1000")
+    msg = aba(s, fid, "📲 WHATSAPP", "A2:Z1000")
     msg.columns = [norm(c) for c in msg.columns]
     col_txt = next(c for c in msg.columns if c.startswith("mensagem"))
 
