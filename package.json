@@ -1,0 +1,10 @@
+{
+  "name": "robo-whatsapp-anjun",
+  "private": true,
+  "type": "module",
+  "description": "Envia a mensagem diaria de cada base no grupo de WhatsApp dela (le da MATRIZ SLA + BACKLOG).",
+  "dependencies": {
+    "@whiskeysockets/baileys": "7.0.0-rc14",
+    "pino": "9.6.0"
+  }
+}

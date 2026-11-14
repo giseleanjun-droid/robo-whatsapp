@@ -1,0 +1,122 @@
+name: WhatsApp Anjun
+
+# Repositório PÚBLICO (minutos ilimitados). Aqui só há código: as mensagens vêm da planilha
+# MATRIZ SLA + BACKLOG no Drive, e a sessão do WhatsApp fica CRIPTOGRAFADA no cache do GitHub
+# (a chave WA_CHAVE é um segredo; quem abrir o cache sem ela só vê lixo).
+on:
+  schedule:
+    - cron: "47 11 * * 1-5"   # 08:47 de Brasília, seg-sex (o GitHub costuma atrasar alguns minutos)
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: "enviar | grupos (só confere os grupos, não envia) | parear (conectar o WhatsApp)"
+        default: "enviar"
+      grupo_teste:
+        description: "Nome de um grupo de TESTE: se preenchido, todas as mensagens vão só para ele"
+        default: ""
+      so_bases:
+        description: "Opcional: só estas bases (ex.: GO-W-D001 GO-W-D009)"
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: whatsapp
+  cancel-in-progress: false
+
+jobs:
+  enviar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      TZ: America/Sao_Paulo
+      MODO: ${{ github.event.inputs.modo || 'enviar' }}
+      GRUPO_TESTE: ${{ github.event.inputs.grupo_teste || '' }}
+      SO_BASES: ${{ github.event.inputs.so_bases || '' }}
+      DRIVE_TOKEN: /tmp/segredos/sa.json
+      PASTA_SLA: ${{ secrets.PASTA_SLA }}
+      WA_TELEFONE: ${{ secrets.WA_TELEFONE }}
+      ALERTA_REMETENTE: ${{ secrets.ALERTA_REMETENTE }}
+      ALERTA_SENHA: ${{ secrets.ALERTA_SENHA }}
+      ALERTA_PARA: ${{ secrets.ALERTA_PARA }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar bibliotecas
+        run: |
+          npm install --no-audit --no-fund --silent
+          pip install --quiet pandas google-auth requests
+
+      - name: Preparar segredos
+        env:
+          SA_JSON: ${{ secrets.DRIVE_TOKEN_JSON }}
+        run: |
+          mkdir -p /tmp/segredos
+          printf '%s' "$SA_JSON" > /tmp/segredos/sa.json
+          chmod 600 /tmp/segredos/*
+          test -s /tmp/segredos/sa.json || { echo "Segredo DRIVE_TOKEN_JSON vazio"; exit 1; }
+
+      - name: Recuperar sessão do WhatsApp (criptografada)
+        uses: actions/cache/restore@v4
+        with:
+          path: auth.tar.enc
+          key: wa-auth-${{ github.run_id }}
+          restore-keys: wa-auth-
+
+      - name: Abrir sessão
+        env:
+          WA_CHAVE: ${{ secrets.WA_CHAVE }}
+        run: |
+          test -n "$WA_CHAVE" || { echo "Segredo WA_CHAVE vazio"; exit 1; }
+          mkdir -p auth
+          if [ -f auth.tar.enc ]; then
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:WA_CHAVE -in auth.tar.enc | tar -xz -C auth \
+              && echo "sessão recuperada" || echo "sessão não abriu (vai precisar parear)"
+          else
+            echo "sem sessão guardada (vai precisar parear)"
+          fi
+
+      - name: Ler a matriz do dia
+        if: env.MODO != 'parear'
+        run: python ler_matriz.py
+
+      - name: WhatsApp
+        id: wa
+        run: node enviar.mjs
+
+      - name: E-mail com o código de pareamento
+        if: always() && env.MODO == 'parear'
+        run: python relatorio.py codigo
+
+      - name: E-mail com o resumo
+        if: always() && env.MODO != 'parear'
+        run: python relatorio.py envio
+
+      - name: Guardar sessão (criptografada)
+        if: always()
+        env:
+          WA_CHAVE: ${{ secrets.WA_CHAVE }}
+        run: |
+          if [ -f auth/creds.json ]; then
+            tar -cz -C auth . | openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:WA_CHAVE -out auth.tar.enc
+          fi
+
+      - name: Salvar no cache
+        if: always() && hashFiles('auth.tar.enc') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: auth.tar.enc
+          key: wa-auth-${{ github.run_id }}
+
+      - name: Apagar segredos e dados
+        if: always()
+        run: rm -rf /tmp/segredos auth codigo.txt mensagens.json resultado.json motivo.txt

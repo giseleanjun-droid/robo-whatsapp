@@ -1,0 +1,11 @@
+# NUNCA subir: sessao do WhatsApp, chaves e dados
+auth/
+*.enc
+*.json
+!package.json
+!package-lock.json
+mensagens*.json
+resultado*.json
+node_modules/
+__pycache__/
+*.xlsx
