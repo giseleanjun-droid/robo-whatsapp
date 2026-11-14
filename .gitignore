@@ -9,3 +9,5 @@ resultado*.json
 node_modules/
 __pycache__/
 *.xlsx
+# configuracao local (tem e-mail e id de pasta): nao publicar
+*.bat
