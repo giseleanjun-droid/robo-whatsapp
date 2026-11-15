@@ -22,6 +22,9 @@ on:
       so_bases:
         description: "Opcional: só estas bases (ex.: GO-W-D001 GO-W-D009)"
         default: ""
+      automatico:
+        description: "sim = disparo do Despertador: respeita a trava de 1 envio por dia"
+        default: "nao"
 
 permissions:
   contents: read
@@ -52,7 +55,7 @@ jobs:
 
       - name: Conferir marca de envio do dia
         id: marca
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event.inputs.automatico == 'sim'
         uses: actions/cache/restore@v4
         with:
           path: enviado.txt
