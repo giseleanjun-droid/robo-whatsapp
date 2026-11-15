@@ -25,6 +25,7 @@ FUSO = ZoneInfo("America/Sao_Paulo")
 DIAS_EXTRAVIO = 7            # parado há MAIS de 7 dias
 DIAS_VENCIDO_VIRA_PERDA = 20
 PRAZO_BASE_PADRAO_DIAS = 2
+MIN_ROTA = 30               # rota só "fecha" com 30 pacotes da cidade: abaixo disso o atraso é justificado (regra Gisele)
 HORA_CORTE = 9               # entrou às 09:00 ou depois -> SLA Base +1 dia (e conta como "recebido após o horário")
 DESTAQUES = ["SHEIN", "TIKTOK"]
 PRIORIDADE = "TIKTOK"
@@ -144,6 +145,14 @@ def _carregar_malha():
     return _MALHA
 
 
+def km_da_malha():
+    """{(base, CIDADE SEM ACENTO): km} da malha.csv (para mostrar a distância nas planilhas e no mapa)."""
+    m = _carregar_malha()
+    if m is None or m.empty:
+        return {}
+    return m.groupby(["base", "cid_n"])["km"].min().to_dict()
+
+
 def _dias_pela_malha(cep, base, cidade):
     """Dias de SLA Base pela malha: pelo CEP do pacote; sem CEP, pela cidade atendida pela base. NaN = fora da malha."""
     m = _carregar_malha()
@@ -190,6 +199,33 @@ def entrou_apos_corte(entrada):
     """Entrada no ponto a partir das 09:00 (horário de Brasília)."""
     h = entrada.dt.hour * 60 + entrada.dt.minute
     return (h >= HORA_CORTE * 60).fillna(False)
+
+
+def _dia_da_rota(base, cidade, entrada, hoje):
+    """
+    Regra dos 30 pacotes (por base + cidade, por dia de entrada): a base pode juntar os pacotes de uma
+    cidade até somar MIN_ROTA. O dia em que o acumulado chega a 30 é o "dia da rota" de todos os pacotes
+    juntados até ali; depois a contagem recomeça. Lote que ainda não chegou a 30 -> sem dia da rota (NaT).
+    """
+    d = pd.DataFrame({"b": base, "c": cidade, "dia": entrada.dt.normalize()}).dropna(subset=["dia"])
+    out = pd.Series(pd.NaT, index=base.index, dtype="datetime64[ns]")
+    if d.empty:
+        return out
+    qtd = d.groupby(["b", "c", "dia"]).size()
+    rota = {}
+    for (b, c), g in qtd.groupby(level=[0, 1]):
+        acum, lote = 0, []
+        for (_, _, dia), n in g.items():
+            lote.append(dia)
+            acum += n
+            if acum >= MIN_ROTA:
+                for x in lote:
+                    rota[(b, c, x)] = dia
+                acum, lote = 0, []
+        # lote aberto (ainda não juntou 30): continua justificado enquanto acumula
+    chave = list(zip(d["b"], d["c"], d["dia"]))
+    out[d.index] = pd.to_datetime([rota.get(k, pd.NaT) for k in chave])
+    return out
 
 
 def _classe_prazo(d, hoje):
@@ -311,6 +347,11 @@ def calcular_sla(df, hoje=None):
     ok_a = a & entregue & (entrega <= t["prazo"])
     ok_b = b & entregue & (entrega <= t["prazo_b"])
     ok_m = mm & entregue & (entrega <= t["prazo_m"])
+    # falha JUSTIFICADA POR VOLUME (< 30 pacotes da cidade no dia): entregue até o fim do "dia da rota",
+    # ou ainda juntando pacotes (lote não chegou a 30)
+    dia_rota = _dia_da_rota(t["base"], t["cidade"], t["entrada"], hoje)
+    fim_rota = dia_rota + pd.Timedelta(hours=23, minutes=59, seconds=59)
+    just_m = mm & ~ok_m & (dia_rota.isna() | (entregue & (entrega <= fim_rota)) | (~entregue & (fim_rota >= hoje)))
     chegou_venc = a & (t["entrada"] > t["prazo"])
 
     aberto = ~finalizado & t["entrada"].notna()
@@ -324,6 +365,7 @@ def calcular_sla(df, hoje=None):
         "dem_ontem": a & eh_ontem(t["prazo"]), "suc_ontem": ok_a & eh_ontem(t["prazo"]),
         "demm_mes": mm & ate_hoje(t["prazo_m"]), "sucm_mes": ok_m & ate_hoje(t["prazo_m"]),
         "demm_ontem": mm & eh_ontem(t["prazo_m"]), "sucm_ontem": ok_m & eh_ontem(t["prazo_m"]),
+        "justm_mes": just_m & ate_hoje(t["prazo_m"]), "justm_ontem": just_m & eh_ontem(t["prazo_m"]),
         "demb_ontem": b & eh_ontem(t["prazo_b"]), "sucb_ontem": ok_b & eh_ontem(t["prazo_b"]),
         "dem_hoje": a & (t["prazo"].dt.date == hoje.date()), "suc_hoje": ok_a & (t["prazo"].dt.date == hoje.date()),
         "cv_mes": chegou_venc & ate_hoje(t["prazo"]), "cv_falha": chegou_venc & ate_hoje(t["prazo"]) & ~ok_a,
@@ -410,7 +452,23 @@ def calcular_sla(df, hoje=None):
                 .agg(recebidos=("waybill", "size"), apos_corte=("apos_corte", "sum"),
                      primeira=("hora", "min"), ultima=("hora", "max"), media=("hora", "mean"))
                 .reset_index())
+    # ---- distância x volume por cidade (malha): base para justificar atraso por rota com menos de 30 pacotes
+    sel = mm & ate_hoje(t["prazo_m"])
+    dv = pd.DataFrame({"uf": t["uf"], "base": t["base"], "cidade": t["cidade"], "dias_malha": t["dias_malha"],
+                       "dia": t["entrada"].dt.normalize(), "ok": ok_m, "just": just_m})[sel]
+    if len(dv):
+        pdia = dv.groupby(["uf", "base", "cidade", "dia"]).size().rename("n").reset_index()
+        dias_ag = pdia.groupby(["uf", "base", "cidade"]).agg(dias=("dia", "nunique"), media_dia=("n", "mean"),
+                                                             dias_abaixo=("n", lambda x: int((x < MIN_ROTA).sum())))
+        dist_vol = (dv.groupby(["uf", "base", "cidade"])
+                    .agg(prazo_dias=("dias_malha", "min"), pacotes=("ok", "size"), no_prazo=("ok", "sum"), justificadas=("just", "sum"))
+                    .join(dias_ag).reset_index())
+        dist_vol["falhas"] = dist_vol["pacotes"] - dist_vol["no_prazo"]
+    else:
+        dist_vol = pd.DataFrame(columns=["uf", "base", "cidade", "prazo_dias", "pacotes", "no_prazo", "justificadas",
+                                         "dias", "media_dia", "dias_abaixo", "falhas"])
     return {"bases": bases, "emb_base": emb_base, "emb_uf": emb_uf, "diario": diario, "entradas": entradas,
+            "dist_vol": dist_vol,
             "motoristas": motoristas, "cidades": cidades, "lista": lista, "tiktok": tiktok, "hoje": hoje,
             "linhas_bd": len(df)}
 
@@ -424,6 +482,10 @@ def _pcts(d):
     if "demm_mes" in d.columns:
         d["sla_m_mes"] = div("sucm_mes", "demm_mes")
         d["sla_m_ontem"] = div("sucm_ontem", "demm_ontem")
+        d["sucmj_mes"] = d["sucm_mes"] + d["justm_mes"]
+        d["sucmj_ontem"] = d["sucm_ontem"] + d["justm_ontem"]
+        d["sla_mj_mes"] = div("sucmj_mes", "demm_mes")        # SLA malha considerando as falhas justificadas por volume
+        d["sla_mj_ontem"] = div("sucmj_ontem", "demm_ontem")
 
 
 ORDEM_PZ = {PZ_ATRASADO: 0, PZ_HOJE: 1, PZ_AMANHA: 2, PZ_SEMANA: 3}

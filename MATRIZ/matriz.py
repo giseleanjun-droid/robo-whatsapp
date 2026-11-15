@@ -171,6 +171,7 @@ def aba_sla_bases(wb, S, carimbo):
         "SLA ANJUN ONTEM": b["sla_a_ontem"], "SLA BASE ONTEM": b["sla_b_ontem"],
         "SLA ANJUN MÊS": b["sla_a_mes"], "SLA BASE MÊS": b["sla_b_mes"],
         "📏 SLA MALHA (km) ONTEM": b.get("sla_m_ontem"), "📏 SLA MALHA (km) MÊS": b.get("sla_m_mes"),
+        "📏 MALHA c/ JUSTIF. VOLUME (MÊS)": b.get("sla_mj_mes"), "FALHAS JUSTIFICADAS (<30 PCT)": b.get("justm_mes"),
         "PACOTES DO DIA (ANJUN)": b["dem_hoje"], "✅ SUCESSO DIA": b["suc_hoje"], "❌ FALHA DIA": b["dem_hoje"] - b["suc_hoje"],
         "PACOTES MÊS (ANJUN)": b["dem_mes"], "✅ SUCESSO MÊS": b["suc_mes"], "❌ FALHA MÊS": b["dem_mes"] - b["suc_mes"],
         "📦 BACKLOG": b["backlog"], "🔴 ATRASADO": b["atrasado"], "🟡 HOJE": b["hoje"], "🟢 AMANHÃ": b["amanha"],
@@ -301,6 +302,34 @@ def aba_entradas(wb, S, carimbo):
         fmt = "0%" if r[2].startswith("%") else "hh:mm"
         for j in range(4, len(cols) + 1):
             ws2.cell(i, j).number_format = fmt
+
+
+def aba_distancia_volume(wb, S, carimbo):
+    """Por base e cidade: km por estrada, prazo da malha, volume por dia e falhas justificadas (< 30 pacotes)."""
+    dv = S.get("dist_vol")
+    if dv is None or dv.empty:
+        return
+    ws = wb.create_sheet("📏 DISTÂNCIA x VOLUME")
+    _titulo(ws, f"📏 DISTÂNCIA x VOLUME — rota só fecha com {motor.MIN_ROTA} pacotes da cidade no dia; abaixo disso o atraso é JUSTIFICADO", carimbo)
+    km = motor.km_da_malha()
+    cid_n = motor._sem_acento_upper(dv["cidade"])
+    pz = {1: "D0 (24h)", 2: "D+1 (48h)", 3: "D+2 (72h)"}
+    out = pd.DataFrame({
+        "UF": dv["uf"], "BASE": dv["base"], "CIDADE": dv["cidade"],
+        "KM (ESTRADA)": [km.get((b, c)) for b, c in zip(dv["base"], cid_n)],
+        "PRAZO MALHA": dv["prazo_dias"].map(pz),
+        "PACOTES (MÊS)": dv["pacotes"], "MÉDIA POR DIA": dv["media_dia"].round(1), "DIAS COM ENTRADA": dv["dias"],
+        f"DIAS COM < {motor.MIN_ROTA}": dv["dias_abaixo"],
+        "NO PRAZO": dv["no_prazo"], "FALHAS": dv["falhas"], "FALHAS JUSTIFICADAS (VOLUME)": dv["justificadas"],
+        "📏 SLA MALHA": np.where(dv["pacotes"] > 0, dv["no_prazo"] / dv["pacotes"].replace(0, 1), np.nan),
+        "📏 SLA c/ JUSTIFICATIVA": np.where(dv["pacotes"] > 0, (dv["no_prazo"] + dv["justificadas"]) / dv["pacotes"].replace(0, 1), np.nan),
+    }).sort_values(["UF", "BASE", "KM (ESTRADA)"])
+    _escrever(ws, out, cor="1155CC", formatos={"📏 SLA MALHA": F_PCT, "📏 SLA c/ JUSTIFICATIVA": F_PCT},
+              larguras={"CIDADE": 26, "BASE": 13})
+    _semaforo_cols(ws, out, ["📏 SLA MALHA", "📏 SLA c/ JUSTIFICATIVA"])
+    L = get_column_letter(list(out.columns).index("MÉDIA POR DIA") + 1)
+    ws.conditional_formatting.add(f"{L}3:{L}{len(out) + 2}", CellIsRule(operator="lessThan", formula=[str(motor.MIN_ROTA)],
+                                                                         fill=FILL(AMARELO)))
 
 
 def aba_embarcadores(wb, S, carimbo):
@@ -543,6 +572,7 @@ def gerar(S, B, destino, hist_antigo=None, grupos=None, links=None, tirar_foto=T
     aba_sla_bases(wb, S, carimbo)
     aba_sla_diario(wb, S, carimbo)
     aba_entradas(wb, S, carimbo)
+    aba_distancia_volume(wb, S, carimbo)
     aba_embarcadores(wb, S, carimbo)
     aba_ranking(wb, S, carimbo)
     aba_cidades(wb, S, carimbo)
