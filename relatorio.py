@@ -74,7 +74,7 @@ def main():
     if nao:
         corpo += "NÃO ENVIADAS:\n" + "\n".join(f"- {r['base']}: {r['status']}" for r in nao) + "\n\n"
         corpo += "Bases 'sem grupo' ou 'grupo não encontrado': preencha o nome exato do grupo (ou o link de convite)\n" \
-                 "na planilha GRUPOS WHATSAPP.\n\n"
+                 "na planilha GRUPOS WHATSAPP. Para NÃO enviar a uma base, apague a linha dela nessa planilha.\n\n"
     if ok:
         corpo += "ENVIADAS:\n" + ", ".join(r["base"] for r in ok)
     mandar(f"WhatsApp robô: {len(ok)} enviadas, {len(nao)} pendentes", corpo)

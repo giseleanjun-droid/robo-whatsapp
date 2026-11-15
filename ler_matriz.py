@@ -99,6 +99,8 @@ def main():
         base = str(r.get("base", "")).strip().upper()
         if not base or (so and base not in so):
             continue
+        if grupos and base not in grupos:   # apagada da GRUPOS WHATSAPP = não envia (inativa, ou estado que não recebe)
+            continue
         g = grupos.get(base, {})
         out.append({"base": base, "uf": base[:2], "grupo": g.get("grupo", ""), "link": g.get("link", ""),
                     "texto": str(r.get(col_txt, ""))})

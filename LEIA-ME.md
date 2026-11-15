@@ -31,6 +31,7 @@ nomes de grupos nem o código de pareamento.
 Na planilha **GRUPOS WHATSAPP** (pasta do SLA), coluna **GRUPO WHATSAPP**: o nome do grupo **exatamente** como
 aparece no WhatsApp (acento e maiúscula não importam). Ou cole o **link de convite** do grupo na coluna
 LINK DO GRUPO (mais seguro se dois grupos tiverem nomes parecidos). Base sem grupo = não envia.
+**Para não enviar a uma base (inativa, ou um estado inteiro, ex.: MS): apague a linha dela** -- o robô não devolve.
 O número conectado precisa estar **dentro** do grupo.
 
 ## Testar sem incomodar ninguém
