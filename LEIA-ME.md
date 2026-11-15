@@ -1,6 +1,6 @@
 # Robô do WhatsApp (repositório público `robo-whatsapp`)
 
-Às **08:47, todos os dias** o GitHub liga um computador na nuvem, lê a aba **📲 WHATSAPP** da planilha
+Às **08:47, todos os dias** (com novas tentativas às 09:13, 09:41 e 10:17 se o GitHub pular o horário; nunca manda 2 vezes no mesmo dia) o GitHub liga um computador na nuvem, lê a aba **📲 WHATSAPP** da planilha
 **MATRIZ SLA + BACKLOG** (feita pelo robô das 04h) e manda a mensagem de cada base no grupo dela.
 Notebook pode ficar desligado. Repositório público = minutos ilimitados e grátis.
 

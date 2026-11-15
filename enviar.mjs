@@ -151,6 +151,8 @@ async function main() {
   }
   fs.writeFileSync("resultado.json", JSON.stringify(resultado, null, 1));
   const env = resultado.filter((r) => r.status === "enviado").length;
+  // marca o dia como enviado (as outras tentativas agendadas da manhã não mandam de novo)
+  if (MODO === "enviar" && !GRUPO_TESTE && env > 0) fs.writeFileSync("enviado.txt", new Date().toISOString());
   log(`FIM: ${env} enviadas · ${resultado.length - env} não enviadas`);
   await espera(3000);
   sock.end?.(undefined);

@@ -5,7 +5,12 @@ name: WhatsApp Anjun
 # (a chave WA_CHAVE é um segredo; quem abrir o cache sem ela só vê lixo).
 on:
   schedule:
-    - cron: "47 11 * * *"     # 08:47 de Brasília, TODOS os dias (o GitHub costuma atrasar alguns minutos)
+    # O agendador do GitHub às vezes PULA um horário (15/11 pulou o das 08:47). Por isso há 4 tentativas;
+    # a primeira que enviar marca o dia como "enviado" e as outras não fazem nada (nunca manda 2 vezes).
+    - cron: "47 11 * * *"     # 08:47 de Brasília
+    - cron: "13 12 * * *"     # 09:13
+    - cron: "41 12 * * *"     # 09:41
+    - cron: "17 13 * * *"     # 10:17
   workflow_dispatch:
     inputs:
       modo:
@@ -41,22 +46,44 @@ jobs:
       ALERTA_SENHA: ${{ secrets.ALERTA_SENHA }}
       ALERTA_PARA: ${{ secrets.ALERTA_PARA }}
     steps:
+      - name: Já enviou hoje?
+        id: dia
+        run: echo "data=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Conferir marca de envio do dia
+        id: marca
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: enviado.txt
+          key: wa-enviado-${{ steps.dia.outputs.data }}
+          lookup-only: true
+
+      - name: Parar (o envio de hoje já foi feito)
+        if: steps.marca.outputs.cache-hit == 'true'
+        run: echo "Mensagens de hoje já enviadas numa tentativa anterior. Nada a fazer." && echo "JA_ENVIOU=1" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
+        if: env.JA_ENVIOU != '1'
 
       - uses: actions/setup-node@v4
+        if: env.JA_ENVIOU != '1'
         with:
           node-version: "22"
 
       - uses: actions/setup-python@v5
+        if: env.JA_ENVIOU != '1'
         with:
           python-version: "3.12"
 
       - name: Instalar bibliotecas
+        if: env.JA_ENVIOU != '1'
         run: |
           npm install --no-audit --no-fund --silent
           pip install --quiet -r requirements.txt
 
       - name: Preparar segredos
+        if: env.JA_ENVIOU != '1'
         env:
           SA_JSON: ${{ secrets.DRIVE_TOKEN_JSON }}
         run: |
@@ -66,6 +93,7 @@ jobs:
           test -s /tmp/segredos/sa.json || { echo "Segredo DRIVE_TOKEN_JSON vazio"; exit 1; }
 
       - name: Recuperar sessão do WhatsApp (criptografada)
+        if: env.JA_ENVIOU != '1'
         uses: actions/cache/restore@v4
         with:
           path: auth.tar.enc
@@ -73,6 +101,7 @@ jobs:
           restore-keys: wa-auth-
 
       - name: Abrir sessão
+        if: env.JA_ENVIOU != '1'
         env:
           WA_CHAVE: ${{ secrets.WA_CHAVE }}
         run: |
@@ -86,19 +115,27 @@ jobs:
           fi
 
       - name: Ler a matriz do dia
-        if: env.MODO != 'parear'
+        if: env.JA_ENVIOU != '1' && (env.MODO != 'parear')
         run: python ler_matriz.py
 
       - name: WhatsApp
+        if: env.JA_ENVIOU != '1'
         id: wa
         run: node enviar.mjs
 
+      - name: Salvar marca de envio do dia
+        if: always() && env.JA_ENVIOU != '1' && hashFiles('enviado.txt') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: enviado.txt
+          key: wa-enviado-${{ steps.dia.outputs.data }}
+
       - name: E-mail com o resumo
-        if: always() && env.MODO != 'parear'
+        if: env.JA_ENVIOU != '1' && (always() && env.MODO != 'parear')
         run: python relatorio.py envio
 
       - name: Guardar sessão (criptografada)
-        if: always()
+        if: env.JA_ENVIOU != '1' && (always())
         env:
           WA_CHAVE: ${{ secrets.WA_CHAVE }}
         run: |
@@ -107,12 +144,12 @@ jobs:
           fi
 
       - name: Salvar no cache
-        if: always() && hashFiles('auth.tar.enc') != ''
+        if: env.JA_ENVIOU != '1' && (always() && hashFiles('auth.tar.enc') != '')
         uses: actions/cache/save@v4
         with:
           path: auth.tar.enc
           key: wa-auth-${{ github.run_id }}
 
       - name: Apagar segredos e dados
-        if: always()
+        if: env.JA_ENVIOU != '1' && (always())
         run: rm -rf /tmp/segredos auth codigo.txt mensagens.json resultado.json motivo.txt
