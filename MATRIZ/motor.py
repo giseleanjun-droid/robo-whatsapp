@@ -145,6 +145,21 @@ def _carregar_malha():
     return _MALHA
 
 
+def base_pela_malha(cep):
+    """Base que a malha (sistema Express) manda para cada CEP. '' = CEP sem base na malha."""
+    m = _carregar_malha()
+    out = pd.Series("", index=cep.index, dtype="string")
+    if m is None or m.empty:
+        return out
+    ok = cep.notna()
+    v = cep[ok].astype("int64").to_numpy()
+    ini, fim, bs = m["cep_ini"].to_numpy(), m["cep_fim"].to_numpy(), m["base"].to_numpy()
+    i = np.searchsorted(ini, v, side="right") - 1
+    dentro = (i >= 0) & (v <= fim[np.clip(i, 0, None)])
+    out[ok] = np.where(dentro, bs[np.clip(i, 0, None)], "")
+    return out
+
+
 def km_da_malha():
     """{(base, CIDADE SEM ACENTO): km} da malha.csv (para mostrar a distância nas planilhas e no mapa)."""
     m = _carregar_malha()
@@ -287,6 +302,7 @@ def _comum(df, hoje):
     t["registrante"] = _txt(_col(df, "registrantedaocorrencia"))
     t["tent"] = _col(df, "totaldetentativas")
     t["rest"] = _col(df, "tentativasrestantes")
+    t["cep"] = pd.to_numeric(_txt(_col(df, "cepdodestinatario")).str.replace(r"\D", "", regex=True), errors="coerce")
     t["rota_txt"] = _txt(_col(df, "conteudodaultimarota")).str.upper()
     t["emb"] = embarcador(df)
     t["dias_malha"] = _dias_pela_malha(_col(df, "cepdodestinatario"), t["base"], t["cidade"])
@@ -378,6 +394,8 @@ def calcular_sla(df, hoje=None):
         "na_base": aberto_ok & ~t["em_rota"], "em_rota": aberto_ok & t["em_rota"],
         "extravio": aberto_ok & (t["dias"] > DIAS_EXTRAVIO),
         "perdas": aberto & t["perda"], "valor_perdas": t["valor"].where(aberto & t["perda"], 0.0),
+        "falha_apos9": a & ate_hoje(t["prazo"]) & ~ok_a & t["apos_corte"],
+        "dem_apos9": a & ate_hoje(t["prazo"]) & t["apos_corte"],
     })
     soma = [c for c in f.columns if c not in ("base", "uf", "emb")]
 
@@ -447,6 +465,17 @@ def calcular_sla(df, hoje=None):
                            "status": tk["status"], "valor": tk["valor"]}).reset_index(drop=True)
     # ---- entrada na base: quanto chega DEPOIS das 09h (por dia, base e HUB) -> conversa com transporte/HUB
     e = t[no_mes(t["entrada"]) & (t["entrada"].dt.date < hoje.date())]
+    # produtividade dos últimos 7 dias (sem hoje): entregas/dia, motoristas/dia, entregas por motorista
+    ent7 = entregue & (entrega.dt.normalize() < pd.Timestamp(hoje.date())) & \
+           (entrega.dt.normalize() >= pd.Timestamp(hoje.date()) - pd.Timedelta(days=7))
+    e7 = pd.DataFrame({"uf": t["uf"], "base": t["base"], "dia": entrega.dt.normalize(), "mot": t["motorista"]})[ent7]
+    if len(e7):
+        pd_dia = e7.groupby(["uf", "base", "dia"]).agg(entregas=("mot", "size"), motoristas=("mot", "nunique")).reset_index()
+        prod = pd_dia.groupby(["uf", "base"]).agg(entregas_dia=("entregas", "mean"), motoristas_dia=("motoristas", "mean"),
+                                                  dias=("dia", "nunique")).reset_index()
+        prod["por_motorista"] = prod["entregas_dia"] / prod["motoristas_dia"].replace(0, np.nan)
+    else:
+        prod = pd.DataFrame(columns=["uf", "base", "entregas_dia", "motoristas_dia", "dias", "por_motorista"])
     entradas = (e.assign(dia=e["entrada"].dt.day, hora=e["entrada"].dt.hour + e["entrada"].dt.minute / 60)
                 .groupby(["uf", "base", "hub", "dia"])
                 .agg(recebidos=("waybill", "size"), apos_corte=("apos_corte", "sum"),
@@ -468,7 +497,7 @@ def calcular_sla(df, hoje=None):
         dist_vol = pd.DataFrame(columns=["uf", "base", "cidade", "prazo_dias", "pacotes", "no_prazo", "justificadas",
                                          "dias", "media_dia", "dias_abaixo", "falhas"])
     return {"bases": bases, "emb_base": emb_base, "emb_uf": emb_uf, "diario": diario, "entradas": entradas,
-            "dist_vol": dist_vol,
+            "dist_vol": dist_vol, "prod": prod,
             "motoristas": motoristas, "cidades": cidades, "lista": lista, "tiktok": tiktok, "hoje": hoje,
             "linhas_bd": len(df)}
 
@@ -590,5 +619,20 @@ def calcular_backlog(df, hoje=None):
     lista["_o"] = lista["ALERTA"].map(ORDEM_AL)
     lista["_l"] = lista["ONDE ESTÁ"].map(ORDEM_AL)
     lista = lista.sort_values(["BASE", "_o", "_l", "Dias Parado"], ascending=[True, True, True, False]).drop(columns=["_o", "_l"])
-    return {"bases": bases, "ofensores": ofensores, "prazos_cidades": pc,
+    npb = t[t["motivo_n"].str.contains("PERTENCE")].copy()
+    npb["base_malha"] = base_pela_malha(npb["cep"])
+    npb["diag"] = np.where(npb["cep"].isna(), "SEM CEP",
+                  np.where(npb["base_malha"] == "", "CEP SEM BASE NA MALHA",
+                  np.where(npb["base_malha"] == npb["base"], "MALHA DIZ QUE É DA BASE", "TRIAGEM ERRADA")))
+    nao_pertence = pd.DataFrame({"uf": npb["uf"], "base": npb["base"], "cidade": npb["cidade"],
+                                 "cep": npb["cep"].map(lambda c: "" if pd.isna(c) else f"{int(c):08d}"),
+                                 "base_malha": npb["base_malha"], "diag": npb["diag"], "waybill": npb["waybill"],
+                                 "dia": npb["ocorrencia"].dt.strftime("%Y-%m-%d").fillna("")}).reset_index(drop=True)
+    pe = t[t["perda"]]
+    perdas = pd.DataFrame({"uf": pe["uf"], "base": pe["base"], "waybill": pe["waybill"], "emb": pe["emb"],
+                           "motorista": pe["motorista"], "cidade": pe["cidade"], "valor": pe["valor"],
+                           "motivo": pe["motivo"].where(pe["motivo"] != "", "Vencido há 20+ dias (perda por tempo)"),
+                           "dias": pe["dias"], "status": pe["status"],
+                           "dia": pe["ocorrencia"].fillna(pe["entrada"]).dt.strftime("%Y-%m-%d").fillna("")}).reset_index(drop=True)
+    return {"bases": bases, "ofensores": ofensores, "prazos_cidades": pc, "nao_pertence": nao_pertence, "perdas": perdas,
             "lista": lista.reset_index(drop=True), "hoje": hoje, "linhas_bd": len(df)}
