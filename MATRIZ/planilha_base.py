@@ -90,6 +90,8 @@ def aba_sla_resultados(wb, base, S, carimbo):
 
     _card(ws, 2, 1, f"SLA MÊS ANJUN\n{_pct(k['sla_a_mes'])}", _cor_sla(k["sla_a_mes"]))
     _card(ws, 2, 3, f"SLA MÊS BASE\n{_pct(k['sla_b_mes'])}", _cor_sla(k["sla_b_mes"]))
+    if "sla_m_mes" in k:
+        _card(ws, 2, 9, f"📏 SLA MALHA (km)\n{_pct(k['sla_m_mes'])}", _cor_sla(k["sla_m_mes"]))
     for i, emb in enumerate(motor.DESTAQUES):
         a = eb.at[emb, "sla_a_mes"] if emb in eb.index else np.nan
         b = eb.at[emb, "sla_b_mes"] if emb in eb.index else np.nan
@@ -108,17 +110,18 @@ def aba_sla_resultados(wb, base, S, carimbo):
     lin = _bloco(ws, lin, "Gestão do dia da Base 🚀", cab, linhas)
 
     cab = ["TOTAL", "PACOTES DO MÊS (ANJUN)", "✅ SUCESSO", "❌ FALHA", "SLA ANJUN", "SLA BASE", "SLA ANJUN ONTEM",
-           "SLA BASE ONTEM", "CHEGOU VENCIDO"]
+           "SLA BASE ONTEM", "CHEGOU VENCIDO", "📏 SLA MALHA (km)", "📏 MALHA ONTEM"]
     linhas = [["GERAL", k["dem_mes"], k["suc_mes"], k["dem_mes"] - k["suc_mes"], k["sla_a_mes"], k["sla_b_mes"],
-               k["sla_a_ontem"], k["sla_b_ontem"], k["cv_mes"]]]
+               k["sla_a_ontem"], k["sla_b_ontem"], k["cv_mes"], k.get("sla_m_mes"), k.get("sla_m_ontem")]]
     for emb in motor.DESTAQUES:
         if emb in eb.index:
             r = eb.loc[emb]
             linhas.append([emb, r["dem_mes"], r["suc_mes"], r["dem_mes"] - r["suc_mes"], r["sla_a_mes"], r["sla_b_mes"],
-                           r["sla_a_ontem"], r["sla_b_ontem"], r["cv_mes"]])
+                           r["sla_a_ontem"], r["sla_b_ontem"], r["cv_mes"], r.get("sla_m_mes"), r.get("sla_m_ontem")])
     ini = lin + 2
-    lin = _bloco(ws, lin, "Acumulado do mês 🚀", cab, linhas, formatos={5: F_PCT, 6: F_PCT, 7: F_PCT, 8: F_PCT})
+    lin = _bloco(ws, lin, "Acumulado do mês 🚀", cab, linhas, formatos={5: F_PCT, 6: F_PCT, 7: F_PCT, 8: F_PCT, 10: F_PCT, 11: F_PCT})
     _semaforo(ws, f"E{ini}:H{ini + len(linhas) - 1}")
+    _semaforo(ws, f"J{ini}:K{ini + len(linhas) - 1}")
 
     # dia a dia
     d = S["diario"]
@@ -128,7 +131,8 @@ def aba_sla_resultados(wb, base, S, carimbo):
     def taxa(a, b, x):
         return (g(a, x) / g(b, x)) if g(b, x) else None
     linhas = [["SLA Anjun %"] + [taxa("suc", "dem", x) for x in dias],
-              ["SLA Base %"] + [taxa("sucb", "demb", x) for x in dias]]
+              ["SLA Base %"] + [taxa("sucb", "demb", x) for x in dias],
+              ["📏 SLA Malha (km) %"] + [taxa("sucm", "demm", x) for x in dias]]
     for emb in motor.DESTAQUES:
         linhas.append([f"{emb} · SLA Anjun %"] + [taxa(f"suc_{emb}", f"dem_{emb}", x) for x in dias])
         linhas.append([f"{emb} · SLA Base %"] + [taxa(f"sucb_{emb}", f"demb_{emb}", x) for x in dias])

@@ -125,7 +125,7 @@ def aba_resumo_estados(wb, S, B, carimbo):
     _titulo(ws, "📊 RESUMO POR ESTADO — SLA + BACKLOG", carimbo)
     sb, bb = S["bases"], B["bases"]
     s = sb.groupby("uf")[["dem_mes", "suc_mes", "demb_mes", "sucb_mes", "dem_ontem", "suc_ontem", "demb_ontem",
-                          "sucb_ontem", "atrasado", "hoje", "backlog"]].sum()
+                          "sucb_ontem", "demm_mes", "sucm_mes", "atrasado", "hoje", "backlog"]].sum()
     b = bb.groupby("uf")[["total", "valor", "vencidos", "vence_hoje", "extravio", "perdas", "valor_perdas", "tiktok"]].sum()
     df = s.join(b, how="outer").fillna(0).reset_index()
     tk = S["tiktok"].groupby("uf").size()
@@ -134,20 +134,22 @@ def aba_resumo_estados(wb, S, B, carimbo):
         "UF": df["uf"], "Nº BASES": df["uf"].map(sb.groupby("uf").size()).fillna(0).astype(int),
         "SLA ANJUN ONTEM": d("suc_ontem", "dem_ontem"), "SLA BASE ONTEM": d("sucb_ontem", "demb_ontem"),
         "SLA ANJUN MÊS": d("suc_mes", "dem_mes"), "SLA BASE MÊS": d("sucb_mes", "demb_mes"),
+        "📏 SLA MALHA (km) MÊS": d("sucm_mes", "demm_mes"),
         "PACOTES SLA (MÊS)": df["dem_mes"], "🔴 ATRASADOS": df["atrasado"], "🟡 VENCE HOJE": df["hoje"],
         "📦 BACKLOG": df["total"], "VALOR EM RISCO": df["valor"], "🔥 VENCIDOS": df["vencidos"],
         "🚨 +7 DIAS": df["extravio"], "💸 PERDAS (QTD)": df["perdas"], "💸 PERDAS (R$)": df["valor_perdas"],
         "🎵 TIKTOK EM ABERTO": df["uf"].map(tk).fillna(0).astype(int),
     })
-    tot = {c: out[c].sum() for c in out.columns if c not in ("UF",) and not c.startswith("SLA")}
+    tot = {c: out[c].sum() for c in out.columns if c not in ("UF",) and not c.startswith(("SLA", "📏"))}
     tot["UF"] = "TOTAL"
     for nome, (a, c) in {"SLA ANJUN ONTEM": ("suc_ontem", "dem_ontem"), "SLA BASE ONTEM": ("sucb_ontem", "demb_ontem"),
-                         "SLA ANJUN MÊS": ("suc_mes", "dem_mes"), "SLA BASE MÊS": ("sucb_mes", "demb_mes")}.items():
+                         "SLA ANJUN MÊS": ("suc_mes", "dem_mes"), "SLA BASE MÊS": ("sucb_mes", "demb_mes"),
+                         "📏 SLA MALHA (km) MÊS": ("sucm_mes", "demm_mes")}.items():
         tot[nome] = df[a].sum() / df[c].sum() if df[c].sum() else np.nan
     out = pd.concat([out, pd.DataFrame([tot])], ignore_index=True)
-    ult = _escrever(ws, out, formatos={**{c: F_PCT for c in out.columns if c.startswith("SLA")},
+    ult = _escrever(ws, out, formatos={**{c: F_PCT for c in out.columns if c.startswith(("SLA", "📏"))},
                                        "VALOR EM RISCO": F_RS, "💸 PERDAS (R$)": F_RS}, filtro=False)
-    _semaforo_cols(ws, out, [c for c in out.columns if c.startswith("SLA")])
+    _semaforo_cols(ws, out, [c for c in out.columns if c.startswith(("SLA", "📏"))])
     for j in range(1, len(out.columns) + 1):
         ws.cell(ult, j).font = Font(bold=True)
         ws.cell(ult, j).fill = FILL(CINZA)
@@ -168,6 +170,7 @@ def aba_sla_bases(wb, S, carimbo):
         "UF": b["uf"], "BASE": b["base"],
         "SLA ANJUN ONTEM": b["sla_a_ontem"], "SLA BASE ONTEM": b["sla_b_ontem"],
         "SLA ANJUN MÊS": b["sla_a_mes"], "SLA BASE MÊS": b["sla_b_mes"],
+        "📏 SLA MALHA (km) ONTEM": b.get("sla_m_ontem"), "📏 SLA MALHA (km) MÊS": b.get("sla_m_mes"),
         "PACOTES DO DIA (ANJUN)": b["dem_hoje"], "✅ SUCESSO DIA": b["suc_hoje"], "❌ FALHA DIA": b["dem_hoje"] - b["suc_hoje"],
         "PACOTES MÊS (ANJUN)": b["dem_mes"], "✅ SUCESSO MÊS": b["suc_mes"], "❌ FALHA MÊS": b["dem_mes"] - b["suc_mes"],
         "📦 BACKLOG": b["backlog"], "🔴 ATRASADO": b["atrasado"], "🟡 HOJE": b["hoje"], "🟢 AMANHÃ": b["amanha"],
@@ -193,7 +196,7 @@ def aba_sla_diario(wb, S, carimbo):
         return
     dias = list(range(1, hoje.day + 1))
     linhas = []
-    nomes = [("SLA Anjun %", "suc", "dem"), ("SLA Base %", "sucb", "demb"),
+    nomes = [("SLA Anjun %", "suc", "dem"), ("SLA Base %", "sucb", "demb"), ("📏 SLA Malha (km) %", "sucm", "demm"),
              ("🎵 TikTok SLA Anjun %", "suc_TIKTOK", "dem_TIKTOK"), ("🎵 TikTok SLA Base %", "sucb_TIKTOK", "demb_TIKTOK")]
     cont = [("Pacotes do dia SLA Anjun", "dem"), ("Entregue (Baixas)", "entregue"), ("Recebido", "recebido"),
             ("Recebido após 09h (+1 dia SLA Base)", "recebido_apos9"),

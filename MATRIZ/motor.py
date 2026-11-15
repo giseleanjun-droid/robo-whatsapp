@@ -125,8 +125,51 @@ def _dias_corridos(d, hoje):
     return (pd.Timestamp(hoje.date()) - d.dt.normalize()).dt.days
 
 
-def _prazo_base(prazo_b, entrada, cidade):
-    """SLA Base vazio: entrada + dias mais comuns da cidade (aprendidos do próprio BD), senão 2."""
+# ---------------------------------------------------------------- malha de atendimento (km -> prazo)
+# malha.csv vem do sistema Express (Gestão de Pontos) + km por estrada: até 51 km D0 (24h) · 51-150 D+1 (48h)
+# · acima de 150 D+2 (72h). Remotos/especiais não estão no arquivo (ficam com o prazo do SRM).
+USAR_MALHA = False   # desligado até a Gisele decidir (o SLA Base do AC cai de ~72% para ~23%)
+_MALHA = None
+
+
+def _carregar_malha():
+    global _MALHA
+    if _MALHA is None:
+        from pathlib import Path
+        p = Path(__file__).with_name("malha.csv")
+        _MALHA = pd.read_csv(p, dtype={"cep_ini": "int64", "cep_fim": "int64"}) if p.exists() else pd.DataFrame()
+        if len(_MALHA):
+            _MALHA = _MALHA.sort_values("cep_ini").reset_index(drop=True)
+            _MALHA["cid_n"] = _sem_acento_upper(_MALHA["cidade"])
+    return _MALHA
+
+
+def _dias_pela_malha(cep, base, cidade):
+    """Dias de SLA Base pela malha: pelo CEP do pacote; sem CEP, pela cidade atendida pela base. NaN = fora da malha."""
+    m = _carregar_malha()
+    out = pd.Series(np.nan, index=base.index)
+    if m is None or m.empty:
+        return out
+    c = pd.to_numeric(cep.astype("string").str.replace(r"\D", "", regex=True).str.zfill(8), errors="coerce")
+    if c.notna().any():
+        ini, fim, dias = m["cep_ini"].to_numpy(), m["cep_fim"].to_numpy(), m["dias"].to_numpy()
+        ok = c.notna()
+        v = c[ok].to_numpy().astype("int64")
+        i = np.searchsorted(ini, v, side="right") - 1
+        dentro = (i >= 0) & (v <= fim[np.clip(i, 0, None)])
+        res = np.where(dentro, dias[np.clip(i, 0, None)], np.nan)
+        out[ok] = res
+    falta = out.isna()
+    if falta.any():   # sem CEP no BD (SLA enxuto): pela cidade dentro da base
+        mapa = m.groupby(["base", "cid_n"])["dias"].min()
+        chave = list(zip(base[falta], _sem_acento_upper(cidade[falta])))
+        out[falta] = [mapa.get(k, np.nan) for k in chave]
+    return out
+
+
+def _prazo_base(prazo_b, entrada, cidade, dias_malha=None):
+    """SLA Base: pela malha (entrada + 24/48/72h); fora da malha, o "Horário de entrega solicitado" do SRM;
+    vazio: entrada + dias mais comuns da cidade (aprendidos do próprio BD), senão 2. Depois, +1 dia se entrou após 08:59."""
     dias = ((prazo_b - entrada).dt.total_seconds() / 86400).round()
     ok = dias.notna() & (dias > 0)
     if ok.any():
@@ -135,6 +178,9 @@ def _prazo_base(prazo_b, entrada, cidade):
         moda = pd.Series(dtype=float)
     estim = entrada + pd.to_timedelta(cidade.map(moda).fillna(PRAZO_BASE_PADRAO_DIAS), unit="D")
     prazo_b = prazo_b.fillna(estim)
+    if USAR_MALHA and dias_malha is not None:
+        pela_malha = entrada + pd.to_timedelta(dias_malha, unit="D")
+        prazo_b = pela_malha.where(dias_malha.notna() & entrada.notna(), prazo_b)
     # Regra de todos os estados: pacote que entra na base DEPOIS das 08:59 ganha +1 dia no SLA Base.
     # (o SRM não aplica: o "Horário de entrega solicitado" é sempre entrada + N dias no mesmo horário)
     return prazo_b + pd.to_timedelta(entrou_apos_corte(entrada).astype(int), unit="D")
@@ -207,7 +253,11 @@ def _comum(df, hoje):
     t["rest"] = _col(df, "tentativasrestantes")
     t["rota_txt"] = _txt(_col(df, "conteudodaultimarota")).str.upper()
     t["emb"] = embarcador(df)
-    t["prazo_b"] = _prazo_base(_data(_col(df, "horariodeentregasolicitado")), t["entrada"], t["cidade"])
+    t["dias_malha"] = _dias_pela_malha(_col(df, "cepdodestinatario"), t["base"], t["cidade"])
+    t["prazo_b"] = _prazo_base(_data(_col(df, "horariodeentregasolicitado")), t["entrada"], t["cidade"], t["dias_malha"])
+    # 📏 SLA MALHA (km): entrada + 24/48/72h pela malha + 1 dia se entrou a partir das 09h. Só pacotes na malha.
+    t["prazo_m"] = (t["entrada"] + pd.to_timedelta(t["dias_malha"] + entrou_apos_corte(t["entrada"]).astype(int), unit="D")
+                    ).where(t["dias_malha"].notna())
     t["dias"] = _dias_corridos(t["entrada"].fillna(t["custodia"]).fillna(t["ult_rastreio"]), hoje).fillna(0).clip(lower=0).astype(int)
     t["pz_classe"], t["pz_diff"] = _classe_prazo(t["prazo"], hoje)
     t["pzb_classe"], _ = _classe_prazo(t["prazo_b"], hoje)
@@ -257,8 +307,10 @@ def calcular_sla(df, hoje=None):
 
     a = t["prazo"].notna() & ~devolvido
     b = t["prazo_b"].notna() & ~devolvido
+    mm = t["prazo_m"].notna() & ~devolvido
     ok_a = a & entregue & (entrega <= t["prazo"])
     ok_b = b & entregue & (entrega <= t["prazo_b"])
+    ok_m = mm & entregue & (entrega <= t["prazo_m"])
     chegou_venc = a & (t["entrada"] > t["prazo"])
 
     aberto = ~finalizado & t["entrada"].notna()
@@ -270,6 +322,8 @@ def calcular_sla(df, hoje=None):
         "dem_mes": a & ate_hoje(t["prazo"]), "suc_mes": ok_a & ate_hoje(t["prazo"]),
         "demb_mes": b & ate_hoje(t["prazo_b"]), "sucb_mes": ok_b & ate_hoje(t["prazo_b"]),
         "dem_ontem": a & eh_ontem(t["prazo"]), "suc_ontem": ok_a & eh_ontem(t["prazo"]),
+        "demm_mes": mm & ate_hoje(t["prazo_m"]), "sucm_mes": ok_m & ate_hoje(t["prazo_m"]),
+        "demm_ontem": mm & eh_ontem(t["prazo_m"]), "sucm_ontem": ok_m & eh_ontem(t["prazo_m"]),
         "demb_ontem": b & eh_ontem(t["prazo_b"]), "sucb_ontem": ok_b & eh_ontem(t["prazo_b"]),
         "dem_hoje": a & (t["prazo"].dt.date == hoje.date()), "suc_hoje": ok_a & (t["prazo"].dt.date == hoje.date()),
         "cv_mes": chegou_venc & ate_hoje(t["prazo"]), "cv_falha": chegou_venc & ate_hoje(t["prazo"]) & ~ok_a,
@@ -299,6 +353,7 @@ def calcular_sla(df, hoje=None):
             reg.append(pd.DataFrame({"base": t.loc[m, "base"], "dia": data[m].dt.day, "k": nome}))
     por_dia("dem", a, t["prazo"]); por_dia("suc", ok_a, t["prazo"])
     por_dia("demb", b, t["prazo_b"]); por_dia("sucb", ok_b, t["prazo_b"])
+    por_dia("demm", mm, t["prazo_m"]); por_dia("sucm", ok_m, t["prazo_m"])
     por_dia("entregue", entregue, entrega); por_dia("recebido", pd.Series(True, index=t.index), t["entrada"])
     por_dia("chegou_atrasado", t["entrada"] > t["prazo"], t["entrada"])
     por_dia("recebido_apos9", t["apos_corte"], t["entrada"])
@@ -366,6 +421,9 @@ def _pcts(d):
     d["sla_b_mes"] = div("sucb_mes", "demb_mes")
     d["sla_a_ontem"] = div("suc_ontem", "dem_ontem")
     d["sla_b_ontem"] = div("sucb_ontem", "demb_ontem")
+    if "demm_mes" in d.columns:
+        d["sla_m_mes"] = div("sucm_mes", "demm_mes")
+        d["sla_m_ontem"] = div("sucm_ontem", "demm_ontem")
 
 
 ORDEM_PZ = {PZ_ATRASADO: 0, PZ_HOJE: 1, PZ_AMANHA: 2, PZ_SEMANA: 3}

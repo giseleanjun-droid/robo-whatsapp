@@ -12,3 +12,6 @@ __pycache__/
 # configuracao local (tem e-mail e id de pasta): nao publicar
 *.bat
 *.gs
+# dados da malha (faixas de CEP / km das bases): so no repositorio PRIVADO
+MATRIZ/malha.csv
+*.csv
