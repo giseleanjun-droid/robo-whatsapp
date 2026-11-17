@@ -98,7 +98,8 @@ def link_painel(sessao, pasta):
     if not fid:
         return ""
     r = sessao.get(f"https://www.googleapis.com/drive/v3/files/{fid}", params={"alt": "media", "supportsAllDrives": "true"}, timeout=60)
-    return r.text.strip() if r.ok and r.text.strip().startswith("https://") else ""
+    url = r.text.strip() if r.ok else ""
+    return url if url.startswith("https://") and "/dev" not in url else ""   # /dev só abre para quem edita
 
 
 def montar(sessao, pasta, painel=None):
