@@ -75,7 +75,8 @@ def main():
     # carimbo "SLA: 15/11 04:12 · Backlog: ..." na célula F1 da aba
     carimbo = " ".join(aba(s, fid, "📲 WHATSAPP", "A1:K1", cabecalho=0).astype(str).values.ravel())
     hoje = dt.datetime.now(ZoneInfo("America/Sao_Paulo")).strftime("%d/%m")
-    if f"SLA: {hoje}" not in carimbo and os.environ.get("IGNORAR_DATA") != "1":
+    so_dir = os.environ.get("SO_BASES", "").upper().split() == ["DIRETORIA"]   # teste só do resumo: ele traz a própria data
+    if f"SLA: {hoje}" not in carimbo and os.environ.get("IGNORAR_DATA") != "1" and not so_dir:
         parar(f"a matriz não é de hoje ({hoje}). Carimbo encontrado: {carimbo.strip()[:80] or 'vazio'}")
 
     msg = aba(s, fid, "📲 WHATSAPP", "A2:Z1000")
