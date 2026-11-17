@@ -11,6 +11,7 @@ Variáveis de ambiente:
   SO_BASES      opcional: "GO-W-D001 GO-W-D009" -> só essas bases
   IGNORAR_DATA  "1" -> aceita matriz de outro dia (só para teste)
 Saída: mensagens.json  [{base, uf, grupo, link, texto}]  e, se parar, motivo.txt
+Linha DIRETORIA na GRUPOS WHATSAPP = também manda o resumo da diretoria (diretoria.py) nesse grupo.
 """
 import io
 import json
@@ -104,6 +105,15 @@ def main():
         g = grupos.get(base, {})
         out.append({"base": base, "uf": base[:2], "grupo": g.get("grupo", ""), "link": g.get("link", ""),
                     "texto": str(r.get(col_txt, ""))})
+    # resumo da DIRETORIA: linha "DIRETORIA" na planilha GRUPOS WHATSAPP (se falhar, as bases saem normalmente)
+    g = grupos.get("DIRETORIA")
+    if g and (g.get("grupo") or g.get("link")) and (not so or "DIRETORIA" in so):
+        try:
+            import diretoria
+            out.insert(0, {"base": "DIRETORIA", "uf": "", "grupo": g["grupo"], "link": g["link"], "texto": diretoria.montar(s, pasta)})
+            print("resumo da diretoria OK")
+        except Exception as e:
+            print("resumo da diretoria NÃO montado:", type(e).__name__)
     (AQUI / "mensagens.json").write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
     com = sum(1 for x in out if x["grupo"] or x["link"])
     print(f"matriz de hoje OK: {len(out)} bases, {com} com grupo configurado")
