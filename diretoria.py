@@ -171,7 +171,7 @@ def texto(X, diario, mensal, causas, perdas, painel="", agora=None, plano=None):
     b["suc_mes"] = b["base"].map(mtd["no_prazo"]).fillna(0)
     R = b[num].sum()
     sla_mes = _pct(R.suc_mes, R.dem_mes)
-    sla_bm = _pct(dm["no_prazo_base"].sum(), dm["pacotes_base"].sum())
+    # SLA Base continua do motor (regra das 09h e prazo da cidade); a evolução diária não tem essas regras
     por_dia = d.groupby("data")[["pacotes", "no_prazo"]].sum()
     dias = [x for x in sorted(por_dia.index) if por_dia.loc[x, "pacotes"] > 0]
     sla_dia = lambda x: _pct(por_dia.loc[x, "no_prazo"], por_dia.loc[x, "pacotes"]) if x in por_dia.index else None
