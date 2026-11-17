@@ -115,10 +115,19 @@ def montar(sessao, pasta, painel=None):
     if not eid:
         raise RuntimeError("_EVOLUCAO_MENSAL_DADOS não encontrado")
     diario, mensal, causas, perdas = (_aba(sessao, eid, n) for n in ("DIARIO", "MENSAL", "CAUSAS", "PERDAS"))
-    return texto(X, diario, mensal, causas, perdas, painel)
+    plano = None
+    pid = _arquivo(sessao, pasta, "_PLANO_ACAO.json", planilha=False)
+    if pid:
+        rp = sessao.get(f"https://www.googleapis.com/drive/v3/files/{pid}", params={"alt": "media", "supportsAllDrives": "true"}, timeout=60)
+        if rp.ok:
+            try:
+                plano = rp.json().get("acoes", [])
+            except ValueError:
+                plano = None
+    return texto(X, diario, mensal, causas, perdas, painel, plano=plano)
 
 
-def texto(X, diario, mensal, causas, perdas, painel="", agora=None):
+def texto(X, diario, mensal, causas, perdas, painel="", agora=None, plano=None):
     agora = agora or dt.datetime.now(ZoneInfo("America/Sao_Paulo"))
     hoje = agora.date()
     # "hoje" = dia da última rodada do robô (sla_ref "17/11 04:46"), se for dos últimos 3 dias
@@ -154,6 +163,15 @@ def texto(X, diario, mensal, causas, perdas, painel="", agora=None):
     d = d[d["UF"].isin(UFS)]
     d["data"] = pd.to_datetime(dict(year=d["ano"], month=d["mes"], day=d["dia"]), errors="coerce").dt.date
     d = d[d["data"] < hoje]
+    # SLA do mês só com dias de prazo JÁ ENCERRADOS: o "dem_mes" do robô (04h) inclui o prazo de hoje,
+    # que ainda nem saiu para entrega e entraria como falha
+    dm = d[d["data"] >= dt.date(ano, mes, 1)]
+    mtd = dm.groupby("base")[["pacotes", "no_prazo"]].sum()
+    b["dem_mes"] = b["base"].map(mtd["pacotes"]).fillna(0)
+    b["suc_mes"] = b["base"].map(mtd["no_prazo"]).fillna(0)
+    R = b[num].sum()
+    sla_mes = _pct(R.suc_mes, R.dem_mes)
+    sla_bm = _pct(dm["no_prazo_base"].sum(), dm["pacotes_base"].sum())
     por_dia = d.groupby("data")[["pacotes", "no_prazo"]].sum()
     dias = [x for x in sorted(por_dia.index) if por_dia.loc[x, "pacotes"] > 0]
     sla_dia = lambda x: _pct(por_dia.loc[x, "no_prazo"], por_dia.loc[x, "pacotes"]) if x in por_dia.index else None
@@ -261,11 +279,32 @@ def texto(X, diario, mensal, causas, perdas, painel="", agora=None):
     b["falhas"] = b["dem_mes"] - b["suc_mes"]
     tf = b["falhas"].sum()
     top = b[b["dem_mes"] >= 100].sort_values("falhas", ascending=False).head(5)
+    # plano de ação (exportado pelo Despertador do painel em _PLANO_ACAO.json)
+    hs = hoje.isoformat()
+    abertas = [a for a in (plano or []) if a.get("status") not in ("Concluída", "Cancelada")]
+    dono = {}
+    for a in abertas:
+        bb = str(a.get("base", "")).upper()
+        if bb and (bb not in dono or str(a.get("prazo", "")) < str(dono[bb].get("prazo", ""))):
+            dono[bb] = a
+
+    def sit(a):
+        if a.get("prazo") and a["prazo"] < hs:
+            return f"⏰ {a.get('resp') or 'sem dono'} (atrasada)"
+        return f"✅ {a.get('resp') or 'sem dono'}"
+
     if tf and len(top):
         L += ["", "🎯 *Onde atacar* (mais atrasos no mês)"]
         for i, (_, x) in enumerate(top.iterrows(), 1):
             L.append(f"{i}. {x['base']} — {_p(_pct(x['suc_mes'], x['dem_mes']))} · {_n(x['falhas'])} atrasos ({100 * x['falhas'] / tf:.0f}%)"
-                     + (f" · {cb[x['base']]}" if x["base"] in cb.index else ""))
+                     + (f" · {cb[x['base']]}" if x["base"] in cb.index else "")
+                     + ("" if plano is None else (f" · {sit(dono[x['base']])}" if x["base"] in dono else " · ❗ sem ação")))
+    if plano:
+        atr = sorted([a for a in abertas if a.get("prazo") and a["prazo"] < hs], key=lambda a: a["prazo"])
+        L += ["", f"📋 *Plano de ação:* {len(abertas)} abertas · {len(atr)} atrasada{'s' if len(atr) != 1 else ''}"]
+        for a in atr[:3]:
+            pz = a["prazo"][8:10] + "/" + a["prazo"][5:7]
+            L.append(f"⏰ {a.get('base')} — {a.get('resp') or 'sem dono'} · prazo {pz}")
     if tot_c:
         g1 = g_c.index[0]
         c1 = c.groupby("causa")["pacotes"].sum().idxmax()
