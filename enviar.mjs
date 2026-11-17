@@ -6,6 +6,7 @@
 // MODO=enviar  -> lê mensagens.json e envia. Pausa aleatória entre os grupos (parecer gente).
 // MODO=grupos  -> só lista quantos grupos a conta tem e quais bases acharam grupo (não envia nada).
 // GRUPO_TESTE  -> se preenchido (nome do grupo), TODAS as mensagens vão para esse grupo (teste).
+// Destino pode ser também uma PESSOA: telefone com DDD na coluna do grupo (ex.: linha DIRETORIA).
 //
 // O log é PÚBLICO (repositório público): aqui só aparecem códigos de base e contagens,
 // nunca o texto das mensagens, nomes de grupos, números ou o código de pareamento.
@@ -104,6 +105,15 @@ async function jidDoGrupo(sock, item, porNome) {
   if (GRUPO_TESTE) {   // aceita o link de convite ou o nome do grupo de teste
     if (jidTeste === undefined) jidTeste = (await porLink(sock, GRUPO_TESTE)) || porNome.get(norm(GRUPO_TESTE)) || null;
     return jidTeste || undefined;
+  }
+  // mensagem direta para uma PESSOA: telefone com DDD no campo do grupo ou do link (ex.: 61 99999-9999)
+  for (const campo of [item.grupo, item.link]) {
+    const dig = String(campo || "").replace(/\D/g, "");
+    if (/^[\d\s()+.-]+$/.test(String(campo || "").trim()) && dig.length >= 10 && dig.length <= 13) {
+      const num = dig.length <= 11 ? "55" + dig : dig;
+      try { const [r] = await sock.onWhatsApp(num); if (r?.exists) return r.jid; } catch { /* número sem WhatsApp */ }
+      return undefined;
+    }
   }
   const cod = (item.link || "").trim().split("?")[0].split("/").pop();
   if (cod && cod.length >= 10) {

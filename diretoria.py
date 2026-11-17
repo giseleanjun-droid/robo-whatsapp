@@ -6,7 +6,8 @@ Fontes (SOMENTE LEITURA, na pasta do SLA):
   _DASH_EXTRA.json ........... robô: SLA de ontem/mês por base, backlog
   _EVOLUCAO_MENSAL_DADOS ..... robô: histórico diário/mensal, causas e perdas oficiais
 
-Envio: na planilha GRUPOS WHATSAPP, crie uma linha com BASE = DIRETORIA e o grupo (nome ou link).
+Envio: na planilha GRUPOS WHATSAPP, crie uma linha com BASE = DIRETORIA e o grupo (nome ou link)
+ou o TELEFONE da pessoa com DDD (mensagem direta).
 O link do painel vai no topo: o dirTestar do Apps Script grava em _PAINEL_DIRETORIA.txt (pasta do SLA).
 Nada de dados aqui no código: tudo é lido do Drive na hora (repositório público).
 """
