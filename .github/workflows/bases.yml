@@ -7,8 +7,8 @@ on:
     # cada horário tem uma 2ª tentativa: o agendador do GitHub às vezes pula (15/11 pulou o das 05:20)
     - cron: "20 8 * * *"      # 05:20 Brasília (depois da rodada das 04h)
     - cron: "5 9 * * *"       # 06:05
-    - cron: "50 17 * * *"     # 14:50 Brasília (depois da rodada das 14h)
-    - cron: "35 18 * * *"     # 15:35
+    - cron: "10 19 * * *"     # 16:10 Brasília (a rodada da tarde termina ~16h)
+    - cron: "45 19 * * *"     # 16:45
     - cron: "50 22 * * 1-5"   # 19:50 Brasília (depois da rodada das 19h)
     - cron: "35 23 * * 1-5"   # 20:35
   workflow_dispatch:
