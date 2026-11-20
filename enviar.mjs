@@ -4,6 +4,7 @@
 //                 (a Gisele digita o código no celular: WhatsApp > Dispositivos conectados >
 //                 Conectar dispositivo > Conectar com número de telefone). A sessão fica em auth/.
 // MODO=enviar  -> lê mensagens.json e envia. Pausa aleatória entre os grupos (parecer gente).
+// MODO=vigia   -> só conecta e confere se a conta continua pareada (21h, avisa antes do envio)
 // MODO=grupos  -> só lista quantos grupos a conta tem e quais bases acharam grupo (não envia nada).
 // GRUPO_TESTE  -> se preenchido (nome do grupo), TODAS as mensagens vão para esse grupo (teste).
 // Destino pode ser também uma PESSOA: telefone com DDD na coluna do grupo (ex.: linha DIRETORIA).
@@ -134,6 +135,12 @@ async function main() {
 
   const sock = await abrir({ prazoMs: 120000 });
   log("conectado ao WhatsApp");
+  if (MODO === "vigia") {   // vigia das 21h: só confere se a conta continua pareada (não lê matriz, não envia)
+    fs.writeFileSync("resultado.json", JSON.stringify([{ base: "-", status: "conectado" }]));
+    await espera(3000);
+    sock.end?.(undefined);
+    return 0;
+  }
   await espera(4000);
   const { porNome, total } = await mapaGrupos(sock);
   const itens = JSON.parse(fs.readFileSync("mensagens.json", "utf-8"));

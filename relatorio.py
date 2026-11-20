@@ -50,6 +50,19 @@ def main():
                "Se o tempo passar, rode o workflow de novo com modo = parear.")
         return
 
+    if tipo == "vigia":   # 21h: só avisa se o WhatsApp não conectou
+        try:
+            res = json.loads(ler("resultado.json") or "[]")
+        except Exception:
+            res = []
+        st = res[0].get("status", "") if res else "não rodou até o fim"
+        if st != "conectado":
+            mandar("⚠️ WhatsApp robô: NÃO conectou no teste das 21h - resolva antes das 09h",
+                   f"{agora} - {st}\n\nSe for sessão caída (DESLOGADO): no GitHub, robo-whatsapp > Actions > WhatsApp Anjun >\n"
+                   "Run workflow, modo = parear. Você recebe outro e-mail com o código para digitar no celular.\n"
+                   "Se for outro erro, veja o log em github.com > robo-whatsapp > Actions.")
+        return
+
     motivo = ler("motivo.txt").strip()
     if motivo:
         mandar("WhatsApp robô: mensagens NÃO enviadas hoje",

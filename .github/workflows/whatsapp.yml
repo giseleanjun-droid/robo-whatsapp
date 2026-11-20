@@ -11,10 +11,11 @@ on:
     - cron: "13 12 * * *"     # 09:13
     - cron: "41 12 * * *"     # 09:41
     - cron: "17 13 * * *"     # 10:17
+    - cron: "0 0 * * *"       # 21:00 VIGIA: só confere se o WhatsApp continua conectado (não envia)
   workflow_dispatch:
     inputs:
       modo:
-        description: "enviar | grupos (só confere os grupos, não envia) | parear (conectar o WhatsApp)"
+        description: "enviar | grupos (só confere os grupos, não envia) | vigia (só testa a conexão) | parear (conectar o WhatsApp)"
         default: "enviar"
       teste:
         description: "sim = TODAS as mensagens vão só para o grupo de teste (segredo WA_GRUPO_TESTE)"
@@ -39,7 +40,7 @@ jobs:
     timeout-minutes: 120
     env:
       TZ: America/Sao_Paulo
-      MODO: ${{ github.event.inputs.modo || 'enviar' }}
+      MODO: ${{ github.event.schedule == '0 0 * * *' && 'vigia' || github.event.inputs.modo || 'enviar' }}
       GRUPO_TESTE: ${{ github.event.inputs.teste == 'sim' && secrets.WA_GRUPO_TESTE || '' }}
       SO_BASES: ${{ github.event.inputs.so_bases || '' }}
       DRIVE_TOKEN: /tmp/segredos/sa.json
@@ -55,7 +56,7 @@ jobs:
 
       - name: Conferir marca de envio do dia
         id: marca
-        if: github.event_name == 'schedule' || github.event.inputs.automatico == 'sim'
+        if: (github.event_name == 'schedule' || github.event.inputs.automatico == 'sim') && env.MODO == 'enviar'
         uses: actions/cache/restore@v4
         with:
           path: enviado.txt
@@ -118,7 +119,7 @@ jobs:
           fi
 
       - name: Ler a matriz do dia
-        if: env.JA_ENVIOU != '1' && (env.MODO != 'parear')
+        if: env.JA_ENVIOU != '1' && env.MODO != 'parear' && env.MODO != 'vigia'
         run: python ler_matriz.py
 
       - name: WhatsApp
@@ -135,7 +136,7 @@ jobs:
 
       - name: E-mail com o resumo
         if: env.JA_ENVIOU != '1' && (always() && env.MODO != 'parear')
-        run: python relatorio.py envio
+        run: python relatorio.py ${{ env.MODO == 'vigia' && 'vigia' || 'envio' }}
 
       - name: Guardar sessão (criptografada)
         if: env.JA_ENVIOU != '1' && (always())
