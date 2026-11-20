@@ -17,7 +17,11 @@ from pathlib import Path
 AQUI = Path(__file__).resolve().parent
 
 
+PREFIXO = ""
+
+
 def mandar(assunto, corpo):
+    assunto = PREFIXO + assunto
     rem, senha, para = (os.environ.get(k, "").strip() for k in ("ALERTA_REMETENTE", "ALERTA_SENHA", "ALERTA_PARA"))
     if not (rem and senha and para):
         print("(e-mail não configurado)")
@@ -38,6 +42,9 @@ def ler(nome):
 
 def main():
     tipo = sys.argv[1] if len(sys.argv) > 1 else "envio"
+    global PREFIXO
+    if tipo == "expedicao":   # mensagem da expedição do GO-74: mesmo relatório do envio, com outro assunto
+        PREFIXO, tipo = "[Expedição GO-74] ", "envio"
     agora = dt.datetime.now().strftime("%d/%m %H:%M")
     if tipo == "codigo":
         cod = ler("codigo.txt").strip()

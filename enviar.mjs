@@ -4,6 +4,7 @@
 //                 (a Gisele digita o código no celular: WhatsApp > Dispositivos conectados >
 //                 Conectar dispositivo > Conectar com número de telefone). A sessão fica em auth/.
 // MODO=enviar  -> lê mensagens.json e envia. Pausa aleatória entre os grupos (parecer gente).
+// MODO=expedicao -> igual ao enviar, mas com as mensagens da expedição do GO-74 (ler_expedicao.py)
 // MODO=vigia   -> só conecta e confere se a conta continua pareada (21h, avisa antes do envio)
 // MODO=grupos  -> só lista quantos grupos a conta tem e quais bases acharam grupo (não envia nada).
 // GRUPO_TESTE  -> se preenchido (nome do grupo), TODAS as mensagens vão para esse grupo (teste).
@@ -171,6 +172,8 @@ async function main() {
   // marca o dia como enviado (as outras tentativas agendadas da manhã não mandam de novo)
   // envio avulso (só algumas bases, ex.: teste da DIRETORIA) NÃO trava o envio do dia para as bases
   if (MODO === "enviar" && !GRUPO_TESTE && !String(process.env.SO_BASES || "").trim() && env > 0) fs.writeFileSync("enviado.txt", new Date().toISOString());
+  // expedição do GO-74 (06h e 19h): trava por turno, separada da mensagem das 09h
+  if (MODO === "expedicao" && !GRUPO_TESTE && !String(process.env.SO_BASES || "").trim() && env > 0) fs.writeFileSync("exped.txt", new Date().toISOString());
   log(`FIM: ${env} enviadas · ${resultado.length - env} não enviadas`);
   await espera(3000);
   sock.end?.(undefined);

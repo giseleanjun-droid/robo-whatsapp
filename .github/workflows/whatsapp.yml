@@ -15,13 +15,16 @@ on:
   workflow_dispatch:
     inputs:
       modo:
-        description: "enviar | grupos (só confere os grupos, não envia) | vigia (só testa a conexão) | parear (conectar o WhatsApp)"
+        description: "enviar | expedicao (expedição do GO-74 por bairro) | grupos (só confere os grupos, não envia) | vigia (só testa a conexão) | parear (conectar o WhatsApp)"
         default: "enviar"
       teste:
         description: "sim = TODAS as mensagens vão só para o grupo de teste (segredo WA_GRUPO_TESTE)"
         default: "nao"
       so_bases:
         description: "Opcional: só estas bases (ex.: GO-W-D001 GO-W-D009)"
+        default: ""
+      turno:
+        description: "Só para modo expedicao: manha ou tarde (vazio = pela hora)"
         default: ""
       automatico:
         description: "sim = disparo do Despertador: respeita a trava de 1 envio por dia"
@@ -43,6 +46,7 @@ jobs:
       MODO: ${{ github.event.schedule == '0 0 * * *' && 'vigia' || github.event.inputs.modo || 'enviar' }}
       GRUPO_TESTE: ${{ github.event.inputs.teste == 'sim' && secrets.WA_GRUPO_TESTE || '' }}
       SO_BASES: ${{ github.event.inputs.so_bases || '' }}
+      TURNO: ${{ github.event.inputs.turno || '' }}
       DRIVE_TOKEN: /tmp/segredos/sa.json
       PASTA_SLA: ${{ secrets.PASTA_SLA }}
       WA_TELEFONE: ${{ secrets.WA_TELEFONE }}
@@ -52,7 +56,11 @@ jobs:
     steps:
       - name: Já enviou hoje?
         id: dia
-        run: echo "data=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "data=$(date +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          T="${TURNO:-$([ "$(date +%H)" -lt 12 ] && echo manha || echo tarde)}"
+          echo "turno=$T" >> "$GITHUB_OUTPUT"
+          echo "TURNO=$T" >> "$GITHUB_ENV"
 
       - name: Conferir marca de envio do dia
         id: marca
@@ -62,6 +70,19 @@ jobs:
           path: enviado.txt
           key: wa-enviado-${{ steps.dia.outputs.data }}
           lookup-only: true
+
+      - name: Conferir marca da expedição do turno
+        id: marcaexp
+        if: github.event.inputs.automatico == 'sim' && env.MODO == 'expedicao'
+        uses: actions/cache/restore@v4
+        with:
+          path: exped.txt
+          key: wa-exped-${{ steps.dia.outputs.data }}-${{ steps.dia.outputs.turno }}
+          lookup-only: true
+
+      - name: Parar (a expedição deste turno já foi enviada)
+        if: steps.marcaexp.outputs.cache-hit == 'true'
+        run: echo "Expedição deste turno já enviada. Nada a fazer." && echo "JA_ENVIOU=1" >> "$GITHUB_ENV"
 
       - name: Parar (o envio de hoje já foi feito)
         if: steps.marca.outputs.cache-hit == 'true'
@@ -120,7 +141,7 @@ jobs:
 
       - name: Ler a matriz do dia
         if: env.JA_ENVIOU != '1' && env.MODO != 'parear' && env.MODO != 'vigia'
-        run: python ler_matriz.py
+        run: python ${{ env.MODO == 'expedicao' && 'ler_expedicao.py' || 'ler_matriz.py' }}
 
       - name: WhatsApp
         if: env.JA_ENVIOU != '1'
@@ -134,9 +155,16 @@ jobs:
           path: enviado.txt
           key: wa-enviado-${{ steps.dia.outputs.data }}
 
+      - name: Salvar marca da expedição do turno
+        if: always() && env.JA_ENVIOU != '1' && hashFiles('exped.txt') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: exped.txt
+          key: wa-exped-${{ steps.dia.outputs.data }}-${{ steps.dia.outputs.turno }}
+
       - name: E-mail com o resumo
         if: env.JA_ENVIOU != '1' && (always() && env.MODO != 'parear')
-        run: python relatorio.py ${{ env.MODO == 'vigia' && 'vigia' || 'envio' }}
+        run: python relatorio.py ${{ env.MODO == 'vigia' && 'vigia' || (env.MODO == 'expedicao' && 'expedicao' || 'envio') }}
 
       - name: Guardar sessão (criptografada)
         if: env.JA_ENVIOU != '1' && (always())
@@ -156,4 +184,4 @@ jobs:
 
       - name: Apagar segredos e dados
         if: env.JA_ENVIOU != '1' && (always())
-        run: rm -rf /tmp/segredos auth codigo.txt mensagens.json resultado.json motivo.txt
+        run: rm -rf /tmp/segredos auth codigo.txt mensagens.json resultado.json motivo.txt exped.txt
