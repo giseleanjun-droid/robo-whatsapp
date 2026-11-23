@@ -102,6 +102,47 @@ def link_painel(sessao, pasta):
     return url if url.startswith("https://") and "/dev" not in url else ""   # /dev só abre para quem edita
 
 
+def _json(sessao, pasta, nome):
+    """Lê um JSON da pasta do SLA; None se não existir ou não abrir (o resumo segue sem aquele bloco)."""
+    try:
+        fid = _arquivo(sessao, pasta, nome, planilha=False)
+        if not fid:
+            return None
+        r = sessao.get(f"https://www.googleapis.com/drive/v3/files/{fid}", params={"alt": "media", "supportsAllDrives": "true"}, timeout=120)
+        return r.json() if r.ok else None
+    except Exception:
+        return None
+
+
+def bloco_hub(H, E):
+    """Linhas do Painel HUB (Apps Script "Painel HUB"): estoque dos HUBs, expedição do GO-74 e o que saiu e não chegou."""
+    L = []
+    if H and H.get("hub"):
+        det = [h for h in (H["hub"].get("hubStockDetail") or []) if h.get("hubName") != "Faixa de filtro atual"]
+        est = sum(int(float(h.get("currentTicketCount") or 0)) for h in det)
+        velho = sum(int(float(h.get(k) or 0)) for h in det for k in ("inventory48To72hCount", "inventory3To7dCount", "inventoryGt7dCount"))
+        go = next((h for h in det if h.get("hubName") == "GO-74"), None)
+        L += ["", "🏭 *HUBs*", f"• Estoque agora: {_n(est)} pacotes · parados há +48h: {_n(velho)}"
+              + (f" · GO-74: {_n(int(float(go.get('currentTicketCount') or 0)))}" if go else "")]
+        exc = pd.DataFrame(H.get("excecoes", {}).get("d", []), columns=H.get("excecoes", {}).get("c", []))
+        if len(exc):
+            ab = exc[~exc["ticketStatusName"].astype(str).str.contains("onclu", na=False)]
+            L.append(f"• Exceções de transferência em aberto: {_n(len(ab))} ({_n(ab['detailSum'].fillna(0).sum())} pacotes)")
+    if E and E.get("itens"):
+        it = E["itens"]
+        turno = "19h → 06h" if E.get("turno") == "manha" else "06h → 19h"
+        p3 = sum(x.get("pend3", 0) for x in it)
+        p7 = sum(x.get("pend7", 0) for x in it)
+        if not L:
+            L += ["", "🏭 *HUBs*"]
+        L.append(f"• GO-74 expediu {_n(E.get('pacotes', 0))} pacotes ({turno}) em {_n(E.get('caminhoes', 0))} caminhões")
+        if p3 + p7:
+            piores = sorted(it, key=lambda x: -(x.get("pend3", 0) + x.get("pend7", 0)))[:3]
+            L.append(f"• Saíram do GO-74 e não deram entrada: ⚠️ 3–7 dias {_n(p3)} · 🚨 +7 dias {_n(p7)}")
+            L.append("  Mais pendências: " + ", ".join(f"{x['base']} {_n(x.get('pend3', 0) + x.get('pend7', 0))}" for x in piores))
+    return L
+
+
 def montar(sessao, pasta, painel=None):
     """Devolve o texto do resumo (WhatsApp) ou levanta erro se faltar fonte."""
     if painel is None:
@@ -125,10 +166,11 @@ def montar(sessao, pasta, painel=None):
                 plano = rp.json().get("acoes", [])
             except ValueError:
                 plano = None
-    return texto(X, diario, mensal, causas, perdas, painel, plano=plano)
+    hub = bloco_hub(_json(sessao, pasta, "_HUB_DADOS.json"), _json(sessao, pasta, "_EXPEDICAO_MSG.json"))
+    return texto(X, diario, mensal, causas, perdas, painel, plano=plano, hub=hub)
 
 
-def texto(X, diario, mensal, causas, perdas, painel="", agora=None, plano=None):
+def texto(X, diario, mensal, causas, perdas, painel="", agora=None, plano=None, hub=None):
     agora = agora or dt.datetime.now(ZoneInfo("America/Sao_Paulo"))
     hoje = agora.date()
     # "hoje" = dia da última rodada do robô (sla_ref "17/11 04:46"), se for dos últimos 3 dias
@@ -310,5 +352,6 @@ def texto(X, diario, mensal, causas, perdas, painel="", agora=None, plano=None):
         g1 = g_c.index[0]
         c1 = c.groupby("causa")["pacotes"].sum().idxmax()
         L += ["", f"🧠 {g1} causa {100 * g_c.iloc[0] / tot_c:.0f}% das falhas do mês. Maior causa: {CAUSA_NOME.get(int(c1), '-')}."]
+    L += hub or []
     L += ["", f"_SLA: {X.get('sla_ref', '')} · Backlog: {X.get('bl_ref', '')}_"]
     return "\n".join(L)
