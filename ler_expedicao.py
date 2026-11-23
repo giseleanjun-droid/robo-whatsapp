@@ -59,7 +59,7 @@ def main():
     out = []
     for it in m.get("itens", []):
         base = str(it.get("base", "")).strip().upper()
-        if not base or (so and base not in so) or not it.get("pacotes"):
+        if not base or (so and base not in so):   # o Painel HUB já só manda base com expedição ou pendente de 3+ dias
             continue
         if grupos and base not in grupos:
             continue
