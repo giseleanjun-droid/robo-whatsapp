@@ -127,7 +127,10 @@ def bloco_hub(H, E):
         exc = pd.DataFrame(H.get("excecoes", {}).get("d", []), columns=H.get("excecoes", {}).get("c", []))
         if len(exc):
             ab = exc[~exc["ticketStatusName"].astype(str).str.contains("onclu", na=False)]
-            L.append(f"• Exceções de transferência em aberto: {_n(len(ab))} ({_n(ab['detailSum'].fillna(0).sum())} pacotes)")
+            # sem somar pacotes: o mesmo pacote pode estar em mais de um chamado (ex.: DF-71 cobra o SP-13 todo dia)
+            par = ab.groupby(["reportSiteName", "handlingSiteName"]).size().sort_values(ascending=False)
+            top = f" · mais: {par.index[0][0]} cobrando {par.index[0][1]} ({par.iloc[0]})" if len(par) else ""
+            L.append(f"• Exceções de transferência em aberto: {_n(len(ab))} chamados{top}")
     if E and E.get("itens"):
         it = E["itens"]
         turno = "19h → 06h" if E.get("turno") == "manha" else "06h → 19h"
