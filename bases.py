@@ -60,6 +60,35 @@ def baixar(svc, fid):
     return buf.getvalue()
 
 
+def aba_expedido(caminho, base, exped):
+    """Acrescenta a aba "📦 EXPEDIDO GO-74" na planilha da base: o que saiu no último turno e o que saiu há +24h sem entrada."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
+    wb = load_workbook(caminho)
+    ws = wb.create_sheet("📦 EXPEDIDO GO-74")
+    b = (exped.get("bases") or {}).get(base) or {"n": 0, "lista": [], "pend": []}
+    cinza, negrito = PatternFill("solid", fgColor="E5E7EB"), Font(bold=True)
+    ws.append([f"🚚 SAÍRAM DO GO-74 PARA {base} · saídas {exped.get('quando', '')} · {b['n']} pacotes · atualizado {exped.get('gerado', '')}"])
+    ws.append(["Pacote", "Cidade", "Bairro", "Veículo", "Lacre"])
+    for c in ws[2]:
+        c.font, c.fill = negrito, cinza
+    for l in sorted(b["lista"], key=lambda x: (str(x[1]), str(x[2]))):
+        ws.append(l)
+    ws.append([])
+    ws.append([f"⏳ SAÍRAM DO GO-74 HÁ MAIS DE 24H E NÃO DERAM ENTRADA · {len(b['pend'])} pacotes · se já está na base, dê entrada; se não chegou, registre na Exceção de Transferência"])
+    t2 = ws.max_row
+    ws.append(["Pacote", "Cidade", "Bairro", "Saída do GO-74", "Dias"])
+    for c in ws[t2 + 1]:
+        c.font, c.fill = negrito, cinza
+    for l in sorted(b["pend"], key=lambda x: -(x[4] or 0)):
+        ws.append(l)
+    for r in (1, t2):
+        ws.cell(r, 1).font = Font(bold=True, size=12)
+    for col, w in zip("ABCDE", (22, 24, 28, 18, 18)):
+        ws.column_dimensions[col].width = w
+    wb.save(caminho)
+
+
 def main():
     import datetime as dt, time
     from zoneinfo import ZoneInfo
@@ -84,6 +113,16 @@ def main():
         time.sleep(180)
     print(f"dados do robô: SLA {S['hoje']:%d/%m %H:%M} · Backlog {B['hoje']:%d/%m %H:%M} (arquivo de {dados['modifiedTime'][:16]} UTC)")
 
+    # listas da expedição do GO-74 (Painel HUB) para a aba "📦 EXPEDIDO GO-74"
+    exped = None
+    if arquivos.get("_EXPEDICAO_LISTAS.json"):
+        try:
+            import json
+            exped = json.loads(baixar(svc, arquivos["_EXPEDICAO_LISTAS.json"]["id"]).decode("utf-8"))
+            print(f"expedição GO-74: listas de {exped.get('gerado')} ({len(exped.get('bases', {}))} bases)")
+        except Exception as e:
+            print(f"expedição GO-74: listas não lidas ({e})")
+
     so = set(os.environ.get("SO_BASES", "").upper().split())
     alvo = {n[:-len(SUFIXO)].strip().upper(): f["id"] for n, f in arquivos.items() if n.endswith(SUFIXO)}
     if so:
@@ -97,6 +136,8 @@ def main():
         for n in range(1, 4):
             try:
                 p = planilha_base.gerar(base, S, B, tmp / f"{base}.xlsx")
+                if exped is not None:
+                    aba_expedido(p, base, exped)
                 s = servico()   # um cliente por thread (o httplib2 não é thread-safe)
                 s.files().update(fileId=fid, media_body=MediaFileUpload(str(p), mimetype=XLSX, resumable=False),
                                  supportsAllDrives=True).execute()
