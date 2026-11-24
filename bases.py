@@ -61,16 +61,27 @@ def baixar(svc, fid):
 
 
 def main():
+    import datetime as dt, time
+    from zoneinfo import ZoneInfo
     svc = servico()
-    arquivos = listar(svc, os.environ["PASTA_SLA"])
-    dados = arquivos.get("_DADOS_BASES.bin")
-    if not dados:
-        sys.exit("_DADOS_BASES.bin não existe na pasta (rode o CriarPlanilhasBases.gs)")
-    bruto = baixar(svc, dados["id"])
-    if len(bruto) < 100:
-        sys.exit("_DADOS_BASES.bin ainda vazio: espere a próxima rodada do robô (04h, 14h ou 19h)")
-    d = pickle.loads(gzip.decompress(bruto))
-    S, B = d["S"], d["B"]
+    # De manhã, espera o robô do SRM terminar a rodada das 04h (24/11 ele terminou 05h32 e as planilhas
+    # foram gravadas às 05h17 com os dados de ontem). Até 60 min, conferindo a cada 3 min.
+    fim = time.time() + 60 * 60
+    while True:
+        arquivos = listar(svc, os.environ["PASTA_SLA"])
+        dados = arquivos.get("_DADOS_BASES.bin")
+        if not dados:
+            sys.exit("_DADOS_BASES.bin não existe na pasta (rode o CriarPlanilhasBases.gs)")
+        bruto = baixar(svc, dados["id"])
+        if len(bruto) < 100:
+            sys.exit("_DADOS_BASES.bin ainda vazio: espere a próxima rodada do robô (04h, 14h ou 19h)")
+        d = pickle.loads(gzip.decompress(bruto))
+        S, B = d["S"], d["B"]
+        agora = dt.datetime.now(ZoneInfo("America/Sao_Paulo"))
+        if agora.hour >= 10 or S["hoje"].date() >= agora.date() or time.time() > fim:
+            break
+        print(f"dados ainda de {S['hoje']:%d/%m %H:%M}: esperando o robô das 04h terminar…", flush=True)
+        time.sleep(180)
     print(f"dados do robô: SLA {S['hoje']:%d/%m %H:%M} · Backlog {B['hoje']:%d/%m %H:%M} (arquivo de {dados['modifiedTime'][:16]} UTC)")
 
     so = set(os.environ.get("SO_BASES", "").upper().split())
