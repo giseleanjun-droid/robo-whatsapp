@@ -543,13 +543,13 @@ def _lista_sla(t):
 
 
 # ================================================================ BACKLOG
-COLS_LISTA_BL = ["ALERTA", "ONDE ESTÁ", "VALIDAÇÃO", "UF", "BASE", "Waybill", "Embarcador", "Status / Local", "Motorista", "Cidade",
+COLS_LISTA_BL = ["ALERTA", "💸 Perda / Reembolso", "ONDE ESTÁ", "VALIDAÇÃO", "UF", "BASE", "Waybill", "Embarcador", "Status / Local", "Motorista", "Cidade",
                  "Dias Parado", "Valor", "Recebido na base", "Data Custódia", "SLA Anjun", "SLA Base",
                  "Reg. Ocorrência", "Registrante", "Motivo", "Tent.", "Rest.",
                  # contato com o cliente (validação de entrega): a base cola o telefone (consulta no SRM, acesso que ela já tem)
                  # e a mensagem pronta monta o link do WhatsApp sozinha. O robô NUNCA traz telefone (é dado protegido no SRM/Express:
                  # só aparece com verificação por código, pessoa a pessoa - não dá pra automatizar isso, nem deve).
-                 "Cliente", "Telefone (cole aqui)", "Mensagem pronta (copiar)", "📲 Link WhatsApp"]
+                 "Cliente", "Telefone (cole aqui)", "Mensagem pronta (copiar)", "📲 Link WhatsApp", "Resposta do cliente"]
 ORDEM_AL = {AL_URGENTE: 0, AL_PERDA: 1, AL_NO_PRAZO: 2, AL_ROTA: 3, AL_ESTOQUE: 4, AL_OUTRA: 5, AL_OUTROS: 6}
 
 
@@ -572,10 +572,16 @@ def calcular_backlog(df, hoje=None):
 
     dias = t["dias"]
     venc = t["pz_diff"] < 0
+    # perda deste mês (ainda vai descontar) x perda de mês anterior (já reembolsada - não cobrar o cliente de novo)
+    data_perda = t["ocorrencia"].fillna(t["entrada"])
+    perda_mes_atual = t["perda"] & (data_perda.dt.year == hoje.year) & (data_perda.dt.month == hoje.month)
+    perda_mes_ant = t["perda"] & ~perda_mes_atual
     f = pd.DataFrame({
         "uf": t["uf"], "base": t["base"],
         "total": vivo, "valor": t["valor"].where(vivo, 0.0),
         "perdas": t["perda"], "valor_perdas": t["valor"].where(t["perda"], 0.0),
+        "perdas_mes": perda_mes_atual, "valor_perdas_mes": t["valor"].where(perda_mes_atual, 0.0),
+        "perdas_ant": perda_mes_ant, "valor_perdas_ant": t["valor"].where(perda_mes_ant, 0.0),
         "rota": vivo & (t["categoria"] == "ROTA"), "valor_rota": t["valor"].where(vivo & (t["categoria"] == "ROTA"), 0.0),
         "estoque": vivo & (t["categoria"] == "ESTOQUE"), "valor_estoque": t["valor"].where(vivo & (t["categoria"] == "ESTOQUE"), 0.0),
         "outra_regiao": vivo & (t["categoria"] == "OUTRA REGIÃO"), "valor_outra": t["valor"].where(vivo & (t["categoria"] == "OUTRA REGIÃO"), 0.0),
@@ -612,6 +618,12 @@ def calcular_backlog(df, hoje=None):
     al = pd.Series(AL_NO_PRAZO, index=t.index, dtype="string")
     al[(dias > DIAS_EXTRAVIO) | venc] = AL_URGENTE
     al[t["perda"]] = AL_PERDA
+    # "💸 Perda / Reembolso": de qual mês é a perda confirmada - vem do status da indenização/motivo que já está
+    # no arquivo do SRM (não precisa de outra fonte). Perda de mês anterior já foi reembolsada: sinaliza para a
+    # base NÃO cobrar o cliente de novo por algo que já foi ressarcido.
+    reembolso = pd.Series(None, index=t.index, dtype="object")
+    reembolso[perda_mes_atual] = "💸 Perda confirmada este mês"
+    reembolso[perda_mes_ant] = "✅ Já reembolsado em " + data_perda.dt.strftime("%m/%Y") + " — NÃO cobrar o cliente de novo"
     motivo = t["motivo"].where(t["motivo"] != "", None)
     venc_dias = (-t["pz_diff"]).where(venc, 0).fillna(0).astype(int)
     motivo = motivo.where(~(t["perda"] & motivo.isna()), "Vencido há " + venc_dias.astype(str) + " dias (perda por tempo)")
@@ -630,13 +642,14 @@ def calcular_backlog(df, hoje=None):
         "Responda com SIM ou NÃO."
     )
     lista = pd.DataFrame({
-        "ALERTA": al, "ONDE ESTÁ": onde, "VALIDAÇÃO": t["validacao"], "UF": t["uf"], "BASE": t["base"], "Waybill": t["waybill"],
+        "ALERTA": al, "💸 Perda / Reembolso": reembolso, "ONDE ESTÁ": onde, "VALIDAÇÃO": t["validacao"], "UF": t["uf"], "BASE": t["base"], "Waybill": t["waybill"],
         "Embarcador": t["emb"], "Status / Local": t["status"], "Motorista": t["motorista"], "Cidade": t["cidade"],
         "Dias Parado": dias, "Valor": t["valor"], "Recebido na base": t["entrada"], "Data Custódia": t["custodia"],
         "SLA Anjun": t["prazo"], "SLA Base": t["prazo_b"], "Reg. Ocorrência": t["ocorrencia"],
         "Registrante": t["registrante"], "Motivo": motivo, "Tent.": t["tent"], "Rest.": t["rest"],
         "Cliente": t["destinatario"], "Telefone (cole aqui)": None, "Mensagem pronta (copiar)": mensagem,
         "📲 Link WhatsApp": None,   # fórmula inserida célula a célula no planilha_base.py (precisa da letra da coluna)
+        "Resposta do cliente": None,   # a base preenche (lista suspensa); o robô preserva o que já foi respondido
     })
     lista["_o"] = lista["ALERTA"].map(ORDEM_AL)
     lista["_l"] = lista["ONDE ESTÁ"].map(ORDEM_AL)

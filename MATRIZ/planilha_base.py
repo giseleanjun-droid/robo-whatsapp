@@ -16,6 +16,9 @@ from openpyxl import Workbook
 from openpyxl.comments import Comment
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font
+from openpyxl.worksheet.datavalidation import DataValidation
+
+RESPOSTAS_CLIENTE = ["✅ SIM - recebeu", "❌ NÃO - não recebeu", "🚚 Entregue hoje", "📵 Não atende", "🔴 Número errado"]
 
 import motor
 from matriz import (_escrever, _semaforo, _texto_regras, FILL, ESCURO, BRANCO, VERDE, AMARELO, VERMELHO,
@@ -221,7 +224,15 @@ def aba_bl_resultados(wb, base, B, carimbo):
     c = ws.cell(5, 1, f"💸 PERDA CONFIRMADA = R$ {k['valor_perdas']:,.2f}  ({int(k['perdas'])} pacotes)"
                 .replace(",", "X").replace(".", ",").replace("X", "."))
     c.font, c.alignment = Font(bold=True, color="CC0000", size=12), Alignment(horizontal="center")
-    lin = 7
+    ws.merge_cells("A6:B6")
+    c = ws.cell(6, 1, f"⚠️ deste mês (vai descontar): R$ {k.get('valor_perdas_mes', 0):,.2f} ({int(k.get('perdas_mes', 0))} pct)"
+                .replace(",", "X").replace(".", ",").replace("X", "."))
+    c.font, c.alignment = Font(bold=True, color="CC0000", size=10), Alignment(horizontal="center")
+    ws.merge_cells("C6:D6")
+    c = ws.cell(6, 3, f"✅ já reembolsado (mês anterior - não cobre o cliente): R$ {k.get('valor_perdas_ant', 0):,.2f} ({int(k.get('perdas_ant', 0))} pct)"
+                .replace(",", "X").replace(".", ",").replace("X", "."))
+    c.font, c.alignment = Font(bold=True, color="34A853", size=10), Alignment(horizontal="center")
+    lin = 8
     lin = _bloco(ws, lin, "STATUS ATUAL", ["CATEGORIA", "QTD", "VALOR (Est.)"],
                  [["🏍️ EM ROTA", k["rota"], k["valor_rota"]], ["📦 ESTOQUE", k["estoque"], k["valor_estoque"]],
                   ["🌍 OUTRA REGIÃO", k["outra_regiao"], k["valor_outra"]], ["⚠️ OUTROS", k["outros"], k["valor_outros"]]],
@@ -254,7 +265,7 @@ def aba_bl_resultados(wb, base, B, carimbo):
         ws.column_dimensions[col].width = w
 
 
-def aba_bl_pacotes(wb, base, B, carimbo):
+def aba_bl_pacotes(wb, base, B, carimbo, anterior=None):
     ws = wb.create_sheet("🚨 BACKLOG PACOTES")
     l = B["lista"]
     l = l[l["BASE"] == base].drop(columns=["UF", "BASE"])
@@ -263,7 +274,7 @@ def aba_bl_pacotes(wb, base, B, carimbo):
     ws.cell(1, 1, f"{carimbo}  ·  " + " · ".join(f"{a} {cont.get(a, 0)}" for a in motor.ORDEM_AL if cont.get(a, 0)) +
             "  |  ONDE ESTÁ: " + " · ".join(f"{a} {onde.get(a, 0)}" for a in motor.ORDEM_AL if onde.get(a, 0)) +
             "  |  📞 contato com o cliente: pesquise o AJ no SRM, cole o telefone na coluna e o link do WhatsApp " +
-            "já sai com a mensagem pronta"
+            "já sai com a mensagem pronta  |  💸 Perda / Reembolso: se já foi reembolsado em mês anterior, NÃO cobre o cliente de novo"
             ).font = Font(size=9, bold=True)
     ws.sheet_view.showGridLines = False
     if l.empty:
@@ -271,43 +282,74 @@ def aba_bl_pacotes(wb, base, B, carimbo):
         return
     _escrever(ws, l, formatos={"Valor": F_RS, "Recebido na base": F_DATA_H, "Data Custódia": F_DATA_H,
                                "SLA Anjun": F_DATA_H, "SLA Base": F_DATA_H, "Reg. Ocorrência": F_DATA_H},
-              larguras={"ALERTA": 22, "ONDE ESTÁ": 18, "Waybill": 20, "Motivo": 34, "Motorista": 22, "Cidade": 20,
+              larguras={"ALERTA": 22, "💸 Perda / Reembolso": 38, "ONDE ESTÁ": 18, "Waybill": 20, "Motivo": 34, "Motorista": 22, "Cidade": 20,
                        "VALIDAÇÃO": 22, "Cliente": 22, "Telefone (cole aqui)": 20,
-                       "Mensagem pronta (copiar)": 40, "📲 Link WhatsApp": 16})
+                       "Mensagem pronta (copiar)": 40, "📲 Link WhatsApp": 16, "Resposta do cliente": 20})
     n = len(l) + 2
     cols = list(l.columns)
     _centralizar(ws, 3, n, len(cols))
     # cor só nos avisos: a coluna ALERTA e a célula TIKTOK
     _texto_regras(ws, f"A3:A{n}", [("VENCIDO", "CC0000", BRANCO), ("PERDA", "000000", BRANCO)])
-    _texto_regras(ws, f"B3:B{n}", [("ROTA", "CFE2F3", None), ("ESTOQUE", "FFF2CC", None), ("OUTRA", "EAD1DC", None)])
+    _texto_regras(ws, f"B3:B{n}", [("este mês", "CC0000", BRANCO), ("reembolsado", "34A853", BRANCO)])
+    c_onde = get_column_letter(cols.index("ONDE ESTÁ") + 1)
+    _texto_regras(ws, f"{c_onde}3:{c_onde}{n}", [("ROTA", "CFE2F3", None), ("ESTOQUE", "FFF2CC", None), ("OUTRA", "EAD1DC", None)])
     _tiktok_vermelho(ws, cols, n)
-    _contato_whatsapp(ws, cols, n)
+    _contato_whatsapp(ws, cols, n, anterior or {})
+    _resposta_cliente(ws, cols, n, anterior or {})
 
 
-def _contato_whatsapp(ws, cols, n):
+def _contato_whatsapp(ws, cols, n, anterior):
     """Coluna 'Telefone (cole aqui)': o número NUNCA vem do robô (é dado protegido no SRM/Express - só aparece
     pessoa a pessoa, com verificação por código; não dá para automatizar, nem deve). A base pesquisa o AJ no
     SRM (acesso que ela já tem) e cola o telefone aqui. A fórmula ao lado monta sozinha o link do WhatsApp já
     com a mensagem pronta (igual ao padrão manual que a Gisele já usa: https://wa.me/<numero>?text=<mensagem>).
+
+    O robô reescreve esta planilha a cada regravação (3x ao dia): sem isso, o telefone colado pela base se
+    perderia a cada vez. `anterior` é {waybill: telefone} lido da planilha anterior (ver bases.py) para o
+    telefone já digitado acompanhar o pacote mesmo com a lista remontada do zero.
     """
     if "Telefone (cole aqui)" not in cols or "Mensagem pronta (copiar)" not in cols or "📲 Link WhatsApp" not in cols:
         return
     c_tel = get_column_letter(cols.index("Telefone (cole aqui)") + 1)
     c_msg = get_column_letter(cols.index("Mensagem pronta (copiar)") + 1)
-    j_tel, j_link = cols.index("Telefone (cole aqui)") + 1, cols.index("📲 Link WhatsApp") + 1
+    j_wb, j_tel, j_link = cols.index("Waybill") + 1, cols.index("Telefone (cole aqui)") + 1, cols.index("📲 Link WhatsApp") + 1
     ws.cell(2, j_tel).comment = Comment(
         "Pesquise o AJ no SRM (Consulta de pedidos) e cole aqui só os números: "
         "DDI + DDD + número, sem espaço/traço. Exemplo: 5562984501234", "Anjun")
     for i in range(3, n + 1):
+        wb_ = ws.cell(i, j_wb).value
+        tel = (anterior.get(wb_) or {}).get("telefone")
+        if tel:
+            ws.cell(i, j_tel, tel)
         ws.cell(i, j_link, f'=IF({c_tel}{i}="","",HYPERLINK("https://wa.me/"&{c_tel}{i}&"?text="&ENCODEURL({c_msg}{i}),"📲 Abrir WhatsApp"))')
 
 
-def gerar(base, S, B, destino):
+def _resposta_cliente(ws, cols, n, anterior=None):
+    """Coluna 'Resposta do cliente': lista suspensa com o que a base apurou depois de mandar a mensagem.
+    Preserva a resposta já marcada antes (igual ao telefone - ver _contato_whatsapp) para não perder o
+    que já foi apurado a cada regravação automática da planilha.
+    """
+    if "Resposta do cliente" not in cols:
+        return
+    j_wb, j_resp = cols.index("Waybill") + 1, cols.index("Resposta do cliente") + 1
+    c_resp = get_column_letter(j_resp)
+    dv = DataValidation(type="list", formula1='"' + ",".join(RESPOSTAS_CLIENTE) + '"', allow_blank=True, showDropDown=False)
+    ws.add_data_validation(dv)
+    dv.add(f"{c_resp}3:{c_resp}{n}")
+    anterior = anterior or {}
+    for i in range(3, n + 1):
+        wb_ = ws.cell(i, j_wb).value
+        resp = (anterior.get(wb_) or {}).get("resposta")
+        if resp:
+            ws.cell(i, j_resp, resp)
+
+
+def gerar(base, S, B, destino, anterior=None):
     carimbo = f"📅 SLA atualizado {S['hoje']:%d/%m %H:%M} · Backlog atualizado {B['hoje']:%d/%m %H:%M}"
     wb = Workbook()
     aba_sla_resultados(wb, base, S, carimbo)
     aba_sla_pacotes(wb, base, S, carimbo)
     aba_bl_resultados(wb, base, B, carimbo)
-    aba_bl_pacotes(wb, base, B, carimbo)
+    aba_bl_pacotes(wb, base, B, carimbo, anterior)
     wb.save(destino)
     return destino

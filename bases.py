@@ -60,6 +60,37 @@ def baixar(svc, fid):
     return buf.getvalue()
 
 
+def ler_anterior(bruto):
+    """Lê o que a base já preencheu na planilha atual (antes de sobrescrever): telefone colado e resposta do
+    cliente marcada, por Waybill. Sem isso, cada regravação automática apagaria o que a base digitou."""
+    from openpyxl import load_workbook
+    try:
+        wb = load_workbook(io.BytesIO(bruto), read_only=True, data_only=True)
+        if "🚨 BACKLOG PACOTES" not in wb.sheetnames:
+            return {}
+        ws = wb["🚨 BACKLOG PACOTES"]
+        linhas = ws.iter_rows(values_only=True)
+        next(linhas, None)   # linha 1: resumo
+        cab = next(linhas, None)   # linha 2: cabeçalho
+        if not cab:
+            return {}
+        idx = {nome: i for i, nome in enumerate(cab) if nome}
+        j_wb, j_tel, j_resp = idx.get("Waybill"), idx.get("Telefone (cole aqui)"), idx.get("Resposta do cliente")
+        if j_wb is None or (j_tel is None and j_resp is None):
+            return {}
+        out = {}
+        for row in linhas:
+            if j_wb >= len(row) or not row[j_wb]:
+                continue
+            tel = row[j_tel] if j_tel is not None and j_tel < len(row) else None
+            resp = row[j_resp] if j_resp is not None and j_resp < len(row) else None
+            if tel or resp:
+                out[row[j_wb]] = {"telefone": str(tel).strip() if tel else None, "resposta": resp or None}
+        return out
+    except Exception:
+        return {}
+
+
 def aba_expedido(caminho, base, exped):
     """Acrescenta a aba "📦 EXPEDIDO GO-74" na planilha da base: o que saiu no último turno e o que saiu há +24h sem entrada."""
     from openpyxl import load_workbook
@@ -135,10 +166,11 @@ def main():
         base, fid = item
         for n in range(1, 4):
             try:
-                p = planilha_base.gerar(base, S, B, tmp / f"{base}.xlsx")
+                s = servico()   # um cliente por thread (o httplib2 não é thread-safe)
+                anterior = ler_anterior(baixar(s, fid))
+                p = planilha_base.gerar(base, S, B, tmp / f"{base}.xlsx", anterior)
                 if exped is not None:
                     aba_expedido(p, base, exped)
-                s = servico()   # um cliente por thread (o httplib2 não é thread-safe)
                 s.files().update(fileId=fid, media_body=MediaFileUpload(str(p), mimetype=XLSX, resumable=False),
                                  supportsAllDrives=True).execute()
                 p.unlink(missing_ok=True)
