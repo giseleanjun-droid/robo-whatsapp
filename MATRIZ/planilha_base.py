@@ -13,6 +13,7 @@ import datetime as dt
 import numpy as np
 import pandas as pd
 from openpyxl import Workbook
+from openpyxl.comments import Comment
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font
 
@@ -260,7 +261,9 @@ def aba_bl_pacotes(wb, base, B, carimbo):
     cont = l["ALERTA"].value_counts()
     onde = l["ONDE ESTÁ"].value_counts()
     ws.cell(1, 1, f"{carimbo}  ·  " + " · ".join(f"{a} {cont.get(a, 0)}" for a in motor.ORDEM_AL if cont.get(a, 0)) +
-            "  |  ONDE ESTÁ: " + " · ".join(f"{a} {onde.get(a, 0)}" for a in motor.ORDEM_AL if onde.get(a, 0))
+            "  |  ONDE ESTÁ: " + " · ".join(f"{a} {onde.get(a, 0)}" for a in motor.ORDEM_AL if onde.get(a, 0)) +
+            "  |  📞 contato com o cliente: pesquise o AJ no SRM, cole o telefone na coluna e o link do WhatsApp " +
+            "já sai com a mensagem pronta"
             ).font = Font(size=9, bold=True)
     ws.sheet_view.showGridLines = False
     if l.empty:
@@ -268,7 +271,9 @@ def aba_bl_pacotes(wb, base, B, carimbo):
         return
     _escrever(ws, l, formatos={"Valor": F_RS, "Recebido na base": F_DATA_H, "Data Custódia": F_DATA_H,
                                "SLA Anjun": F_DATA_H, "SLA Base": F_DATA_H, "Reg. Ocorrência": F_DATA_H},
-              larguras={"ALERTA": 22, "ONDE ESTÁ": 18, "Waybill": 20, "Motivo": 34, "Motorista": 22, "Cidade": 20, "VALIDAÇÃO": 22})
+              larguras={"ALERTA": 22, "ONDE ESTÁ": 18, "Waybill": 20, "Motivo": 34, "Motorista": 22, "Cidade": 20,
+                       "VALIDAÇÃO": 22, "Cliente": 22, "Telefone (cole aqui)": 20,
+                       "Mensagem pronta (copiar)": 40, "📲 Link WhatsApp": 16})
     n = len(l) + 2
     cols = list(l.columns)
     _centralizar(ws, 3, n, len(cols))
@@ -276,6 +281,25 @@ def aba_bl_pacotes(wb, base, B, carimbo):
     _texto_regras(ws, f"A3:A{n}", [("VENCIDO", "CC0000", BRANCO), ("PERDA", "000000", BRANCO)])
     _texto_regras(ws, f"B3:B{n}", [("ROTA", "CFE2F3", None), ("ESTOQUE", "FFF2CC", None), ("OUTRA", "EAD1DC", None)])
     _tiktok_vermelho(ws, cols, n)
+    _contato_whatsapp(ws, cols, n)
+
+
+def _contato_whatsapp(ws, cols, n):
+    """Coluna 'Telefone (cole aqui)': o número NUNCA vem do robô (é dado protegido no SRM/Express - só aparece
+    pessoa a pessoa, com verificação por código; não dá para automatizar, nem deve). A base pesquisa o AJ no
+    SRM (acesso que ela já tem) e cola o telefone aqui. A fórmula ao lado monta sozinha o link do WhatsApp já
+    com a mensagem pronta (igual ao padrão manual que a Gisele já usa: https://wa.me/<numero>?text=<mensagem>).
+    """
+    if "Telefone (cole aqui)" not in cols or "Mensagem pronta (copiar)" not in cols or "📲 Link WhatsApp" not in cols:
+        return
+    c_tel = get_column_letter(cols.index("Telefone (cole aqui)") + 1)
+    c_msg = get_column_letter(cols.index("Mensagem pronta (copiar)") + 1)
+    j_tel, j_link = cols.index("Telefone (cole aqui)") + 1, cols.index("📲 Link WhatsApp") + 1
+    ws.cell(2, j_tel).comment = Comment(
+        "Pesquise o AJ no SRM (Consulta de pedidos) e cole aqui só os números: "
+        "DDI + DDD + número, sem espaço/traço. Exemplo: 5562984501234", "Anjun")
+    for i in range(3, n + 1):
+        ws.cell(i, j_link, f'=IF({c_tel}{i}="","",HYPERLINK("https://wa.me/"&{c_tel}{i}&"?text="&ENCODEURL({c_msg}{i}),"📲 Abrir WhatsApp"))')
 
 
 def gerar(base, S, B, destino):

@@ -305,6 +305,8 @@ def _comum(df, hoje):
     t["cep"] = pd.to_numeric(_txt(_col(df, "cepdodestinatario")).str.replace(r"\D", "", regex=True), errors="coerce")
     t["rota_txt"] = _txt(_col(df, "conteudodaultimarota")).str.upper()
     t["emb"] = embarcador(df)
+    t["destinatario"] = _txt(_col(df, "nomedodestinatario")).replace("", "N/D")
+    t["loja"] = _txt(_col(df, "nomedoclientemerchant")).replace("", "N/D")
     t["dias_malha"] = _dias_pela_malha(_col(df, "cepdodestinatario"), t["base"], t["cidade"])
     t["prazo_b"] = _prazo_base(_data(_col(df, "horariodeentregasolicitado")), t["entrada"], t["cidade"], t["dias_malha"])
     # 📏 SLA MALHA (km): entrada + 24/48/72h pela malha + 1 dia se entrou a partir das 09h. Só pacotes na malha.
@@ -543,7 +545,11 @@ def _lista_sla(t):
 # ================================================================ BACKLOG
 COLS_LISTA_BL = ["ALERTA", "ONDE ESTÁ", "VALIDAÇÃO", "UF", "BASE", "Waybill", "Embarcador", "Status / Local", "Motorista", "Cidade",
                  "Dias Parado", "Valor", "Recebido na base", "Data Custódia", "SLA Anjun", "SLA Base",
-                 "Reg. Ocorrência", "Registrante", "Motivo", "Tent.", "Rest."]
+                 "Reg. Ocorrência", "Registrante", "Motivo", "Tent.", "Rest.",
+                 # contato com o cliente (validação de entrega): a base cola o telefone (consulta no SRM, acesso que ela já tem)
+                 # e a mensagem pronta monta o link do WhatsApp sozinha. O robô NUNCA traz telefone (é dado protegido no SRM/Express:
+                 # só aparece com verificação por código, pessoa a pessoa - não dá pra automatizar isso, nem deve).
+                 "Cliente", "Telefone (cole aqui)", "Mensagem pronta (copiar)", "📲 Link WhatsApp"]
 ORDEM_AL = {AL_URGENTE: 0, AL_PERDA: 1, AL_NO_PRAZO: 2, AL_ROTA: 3, AL_ESTOQUE: 4, AL_OUTRA: 5, AL_OUTROS: 6}
 
 
@@ -609,12 +615,28 @@ def calcular_backlog(df, hoje=None):
     motivo = t["motivo"].where(t["motivo"] != "", None)
     venc_dias = (-t["pz_diff"]).where(venc, 0).fillna(0).astype(int)
     motivo = motivo.where(~(t["perda"] & motivo.isna()), "Vencido há " + venc_dias.astype(str) + " dias (perda por tempo)")
+    # mensagem pronta de validação de entrega (padrão da Gisele): nome, AJ, plataforma e loja já vêm do SRM, sem
+    # nenhum dado protegido. O telefone NÃO entra aqui: a base cola na planilha (consulta que ela já faz no SRM)
+    # e a fórmula da própria planilha monta o link do WhatsApp (ver planilha_base.aba_bl_pacotes).
+    plataforma = t["emb"].str.title().replace({"N/d": "N/D"})
+    mensagem = (
+        "Olá, " + t["destinatario"] + "!\n"
+        "Faço parte da equipe de parceiros da Anjun Express, transportadora responsável pela entrega do seu pedido.\n"
+        "O motivo do meu contato é para falarmos a respeito do pedido " + t["waybill"] + ",\n"
+        "do qual foi aberto uma reclamação.\n\n"
+        "Plataforma: " + plataforma + " (loja " + t["loja"] + ")\n\n"
+        "Por gentileza, poderia confirmar o recebimento do seu pedido?\n\n"
+        "Seu pedido foi entregue?\n"
+        "Responda com SIM ou NÃO."
+    )
     lista = pd.DataFrame({
         "ALERTA": al, "ONDE ESTÁ": onde, "VALIDAÇÃO": t["validacao"], "UF": t["uf"], "BASE": t["base"], "Waybill": t["waybill"],
         "Embarcador": t["emb"], "Status / Local": t["status"], "Motorista": t["motorista"], "Cidade": t["cidade"],
         "Dias Parado": dias, "Valor": t["valor"], "Recebido na base": t["entrada"], "Data Custódia": t["custodia"],
         "SLA Anjun": t["prazo"], "SLA Base": t["prazo_b"], "Reg. Ocorrência": t["ocorrencia"],
         "Registrante": t["registrante"], "Motivo": motivo, "Tent.": t["tent"], "Rest.": t["rest"],
+        "Cliente": t["destinatario"], "Telefone (cole aqui)": None, "Mensagem pronta (copiar)": mensagem,
+        "📲 Link WhatsApp": None,   # fórmula inserida célula a célula no planilha_base.py (precisa da letra da coluna)
     })
     lista["_o"] = lista["ALERTA"].map(ORDEM_AL)
     lista["_l"] = lista["ONDE ESTÁ"].map(ORDEM_AL)
