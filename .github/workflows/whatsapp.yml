@@ -24,7 +24,7 @@ on:
         description: "Opcional: só estas bases (ex.: GO-W-D001 GO-W-D009)"
         default: ""
       turno:
-        description: "Só para modo expedicao: manha ou tarde (vazio = pela hora)"
+        description: "Só para modo expedicao: manha, tarde ou agora (pré-alerta a cada 30 min, sem trava de 1x/dia; vazio = pela hora)"
         default: ""
       automatico:
         description: "sim = disparo do Despertador: respeita a trava de 1 envio por dia"
@@ -73,7 +73,7 @@ jobs:
 
       - name: Conferir marca da expedição do turno
         id: marcaexp
-        if: github.event.inputs.automatico == 'sim' && env.MODO == 'expedicao'
+        if: github.event.inputs.automatico == 'sim' && env.MODO == 'expedicao' && github.event.inputs.turno != 'agora'
         uses: actions/cache/restore@v4
         with:
           path: exped.txt
@@ -143,6 +143,10 @@ jobs:
         if: env.JA_ENVIOU != '1' && env.MODO != 'parear' && env.MODO != 'vigia'
         run: python ${{ env.MODO == 'expedicao' && 'ler_expedicao.py' || 'ler_matriz.py' }}
 
+      - name: Nada de novo (pré-alerta sem caminhão novo desde a última checagem)
+        if: env.JA_ENVIOU != '1' && hashFiles('sem_novidade.txt') != ''
+        run: echo "Pré-alerta: nada de novo. Nada a fazer." && echo "JA_ENVIOU=1" >> "$GITHUB_ENV"
+
       - name: WhatsApp
         if: env.JA_ENVIOU != '1'
         id: wa
@@ -184,4 +188,4 @@ jobs:
 
       - name: Apagar segredos e dados
         if: env.JA_ENVIOU != '1' && (always())
-        run: rm -rf /tmp/segredos auth codigo.txt mensagens.json resultado.json motivo.txt exped.txt
+        run: rm -rf /tmp/segredos auth codigo.txt mensagens.json resultado.json motivo.txt exped.txt sem_novidade.txt

@@ -5,7 +5,9 @@ na pasta do SLA (o que o GO-74 expediu para cada base, por bairro) e os grupos d
 Grava mensagens.json para o enviar.mjs.
 
 Para (motivo.txt) se o arquivo não for do turno de agora: não manda mensagem velha.
-  TURNO   manha | tarde   (padrão: manhã antes do meio-dia)
+  TURNO   manha | tarde | agora   (padrão: manhã antes do meio-dia)
+            agora = pré-alerta a cada 30 min (_EXPEDICAO_AGORA.json): sem trava de dia/turno, só confere
+            se o arquivo é recente; se não tem base com novidade, não é erro (grava sem_novidade.txt e sai)
   SO_BASES opcional: só essas bases
 """
 import datetime as dt
@@ -22,6 +24,12 @@ from ler_matriz import achar, aba, norm, parar, ESCOPO, NOME_GRUPOS
 
 AQUI = Path(__file__).resolve().parent
 NOME_MSG = "_EXPEDICAO_MSG.json"
+NOME_AGORA = "_EXPEDICAO_AGORA.json"
+
+
+def sem_novidade(motivo):
+    (AQUI / "sem_novidade.txt").write_text(motivo, encoding="utf-8")
+    print("PRÉ-ALERTA:", motivo)
 
 
 def main():
@@ -31,17 +39,29 @@ def main():
     agora = dt.datetime.now(ZoneInfo("America/Sao_Paulo"))
     turno = (os.environ.get("TURNO") or ("manha" if agora.hour < 12 else "tarde")).lower()
 
-    q = f"'{pasta}' in parents and name = '{NOME_MSG}' and trashed = false"
+    nome_arquivo = NOME_AGORA if turno == "agora" else NOME_MSG
+    q = f"'{pasta}' in parents and name = '{nome_arquivo}' and trashed = false"
     r = s.get("https://www.googleapis.com/drive/v3/files", params={"q": q, "fields": "files(id)", "supportsAllDrives": "true",
                                                                    "includeItemsFromAllDrives": "true"}, timeout=60)
     r.raise_for_status()
     f = r.json().get("files", [])
     if not f:
+        if turno == "agora":
+            return sem_novidade(f"{NOME_AGORA} ainda não existe (rode hubInstalar no projeto Painel HUB)")
         parar(f"{NOME_MSG} não existe na pasta do SLA (rode hubInstalar no projeto Painel HUB)")
     m = s.get(f"https://www.googleapis.com/drive/v3/files/{f[0]['id']}", params={"alt": "media", "supportsAllDrives": "true"}, timeout=120).json()
-    hoje = agora.strftime("%Y-%m-%d")
-    if m.get("dia") != hoje or m.get("turno") != turno:
-        parar(f"a expedição do GO-74 não é deste turno ({hoje} {turno}). Arquivo: {m.get('dia')} {m.get('turno')} gerado {m.get('gerado')}")
+    if turno == "agora":
+        try:
+            gerado = dt.datetime.strptime(m.get("gerado", ""), "%Y-%m-%d %H:%M").replace(tzinfo=ZoneInfo("America/Sao_Paulo"))
+            idade_min = (agora - gerado).total_seconds() / 60
+        except ValueError:
+            idade_min = 9999
+        if idade_min > 90:
+            return sem_novidade(f"pré-alerta desatualizado (gerado {m.get('gerado')}, {idade_min:.0f} min atrás)")
+    else:
+        hoje = agora.strftime("%Y-%m-%d")
+        if m.get("dia") != hoje or m.get("turno") != turno:
+            parar(f"a expedição do GO-74 não é deste turno ({hoje} {turno}). Arquivo: {m.get('dia')} {m.get('turno')} gerado {m.get('gerado')}")
 
     grupos = {}
     gid = achar(s, pasta, NOME_GRUPOS)
@@ -65,8 +85,13 @@ def main():
             continue
         g = grupos.get(base, {})
         out.append({"base": base, "uf": base[:2], "grupo": g.get("grupo", ""), "link": g.get("link", ""), "texto": it["texto"]})
+    if turno == "agora" and not out:
+        return sem_novidade("nenhuma base com caminhão novo neste ciclo")
     (AQUI / "mensagens.json").write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
-    print(f"expedição GO-74 ({m.get('turno')} {m.get('dia')}): {len(out)} bases com grupo · {m.get('pacotes')} pacotes no total")
+    if turno == "agora":
+        print(f"pré-alerta de carga: {len(out)} base(s) com novidade (gerado {m.get('gerado')})")
+    else:
+        print(f"expedição GO-74 ({m.get('turno')} {m.get('dia')}): {len(out)} bases com grupo · {m.get('pacotes')} pacotes no total")
 
 
 if __name__ == "__main__":
