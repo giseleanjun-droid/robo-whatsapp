@@ -24,7 +24,7 @@ on:
         description: "Opcional: só estas bases (ex.: GO-W-D001 GO-W-D009)"
         default: ""
       turno:
-        description: "Só para modo expedicao: manha, tarde ou agora (pré-alerta a cada 30 min, sem trava de 1x/dia; vazio = pela hora)"
+        description: "Só para modo expedicao: manha, tarde ou agora (pré-alerta a cada 1h, sem trava de 1x/dia; vazio = pela hora)"
         default: ""
       automatico:
         description: "sim = disparo do Despertador: respeita a trava de 1 envio por dia"
