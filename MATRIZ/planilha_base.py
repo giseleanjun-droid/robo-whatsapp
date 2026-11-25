@@ -7,6 +7,7 @@ planilha_base.py - a planilha de UMA base (SLA + BACKLOG num arquivo só), no vi
                         PRAZO BASE em destaque, linhas do TIKTOK destacadas
   📦 BACKLOG RESULTADOS painel de risco (total, perda, categorias, tempo parado, situação, motoristas)
   🚨 BACKLOG PACOTES    lista única: coluna 1 = 🚨 VENCIDO / 💸 PERDA / 🏍️ ROTA / 📦 ESTOQUE / 🌍 OUTRA REGIÃO
+  💸 PERDAS             só os pacotes já confirmados como perda, separados em deste mês x já reembolsado
 """
 import datetime as dt
 
@@ -265,6 +266,29 @@ def aba_bl_resultados(wb, base, B, carimbo):
         ws.column_dimensions[col].width = w
 
 
+def aba_perdas_base(wb, base, B, carimbo):
+    """Só os pacotes já confirmados como perda desta base, separados por mês (ver 💸 Perda / Reembolso em
+    aba_bl_pacotes). Pedido da Gisele: uma aba própria, para a base não precisar filtrar no meio do backlog todo.
+    """
+    ws = wb.create_sheet("💸 PERDAS")
+    ws.sheet_view.showGridLines = False
+    l = B["lista"]
+    l = l[(l["BASE"] == base) & (l["ALERTA"] == motor.AL_PERDA)]
+    ws.cell(1, 1, f"{carimbo}  ·  {len(l)} pacotes  ·  R$ {l['Valor'].sum():,.2f}"
+            .replace(",", "X").replace(".", ",").replace("X", ".")).font = Font(size=9, bold=True)
+    if l.empty:
+        ws.cell(3, 1, "Zerado! ✅")
+        return
+    out = l[["💸 Perda / Reembolso", "Waybill", "Embarcador", "Motorista", "Cidade", "Dias Parado", "Valor", "Motivo", "Registrante"]].copy()
+    out["_o"] = out["💸 Perda / Reembolso"].str.startswith("💸").map({True: 0, False: 1})   # este mês primeiro (ainda precisa de atenção)
+    out = out.sort_values(["_o", "Dias Parado"], ascending=[True, False]).drop(columns=["_o"])
+    _escrever(ws, out, formatos={"Valor": F_RS},
+              larguras={"💸 Perda / Reembolso": 44, "Waybill": 20, "Motivo": 34, "Motorista": 22, "Cidade": 20})
+    n = len(out) + 2
+    _centralizar(ws, 3, n, len(out.columns))
+    _texto_regras(ws, f"A3:A{n}", [("este mês", "CC0000", BRANCO), ("reembolsado", "34A853", BRANCO)])
+
+
 def aba_bl_pacotes(wb, base, B, carimbo, anterior=None):
     ws = wb.create_sheet("🚨 BACKLOG PACOTES")
     l = B["lista"]
@@ -351,5 +375,6 @@ def gerar(base, S, B, destino, anterior=None):
     aba_sla_pacotes(wb, base, S, carimbo)
     aba_bl_resultados(wb, base, B, carimbo)
     aba_bl_pacotes(wb, base, B, carimbo, anterior)
+    aba_perdas_base(wb, base, B, carimbo)
     wb.save(destino)
     return destino
