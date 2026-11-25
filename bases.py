@@ -60,6 +60,17 @@ def baixar(svc, fid):
     return buf.getvalue()
 
 
+def exportar_xlsx(svc, fid):
+    """A planilha de cada base é um Google Sheets NATIVO (não um arquivo binário): get_media() não funciona nele
+    (dá 403) - precisa exportar para xlsx."""
+    buf = io.BytesIO()
+    dl = MediaIoBaseDownload(buf, svc.files().export_media(fileId=fid, mimeType=XLSX))
+    feito = False
+    while not feito:
+        _, feito = dl.next_chunk()
+    return buf.getvalue()
+
+
 def ler_anterior(bruto):
     """Lê o que a base já preencheu na planilha atual (antes de sobrescrever): telefone colado e resposta do
     cliente marcada, por Waybill. Sem isso, cada regravação automática apagaria o que a base digitou."""
@@ -167,7 +178,7 @@ def main():
         for n in range(1, 4):
             try:
                 s = servico()   # um cliente por thread (o httplib2 não é thread-safe)
-                anterior = ler_anterior(baixar(s, fid))
+                anterior = ler_anterior(exportar_xlsx(s, fid))
                 p = planilha_base.gerar(base, S, B, tmp / f"{base}.xlsx", anterior)
                 if exped is not None:
                     aba_expedido(p, base, exped)
@@ -176,7 +187,7 @@ def main():
                 p.unlink(missing_ok=True)
                 return base, "ok"
             except Exception as e:
-                erro = str(e)[:120]
+                erro = str(e)[:300]
                 time.sleep(5 * n)
         return base, "falhou: " + erro
 
