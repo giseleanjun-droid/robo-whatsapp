@@ -149,6 +149,33 @@ def aba_expedido(caminho, base, exped):
     wb.save(caminho)
 
 
+COMPLAINT_TYPE = {0: "Fake delivery", 1: "Reclamação Comercial", 2: "Reclame Aqui"}
+
+
+def aba_acareacao(caminho, base, casos):
+    """Acrescenta a aba "🗣️ ACAREAÇÃO" na planilha da base: casos ABERTOS de Fake delivery/Reclamação
+    Comercial/Reclame Aqui (Tratamento de Acareação no SRM) - a base confirma o que já foi validado."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font, PatternFill
+    wb = load_workbook(caminho)
+    ws = wb.create_sheet("🗣️ ACAREAÇÃO")
+    ws.sheet_view.showGridLines = False
+    cinza, negrito = PatternFill("solid", fgColor="E5E7EB"), Font(bold=True)
+    ws.cell(1, 1, f"Casos ABERTOS de acareação (Fake delivery / Reclamação Comercial / Reclame Aqui) · {len(casos)} caso(s)"
+            ).font = Font(bold=True, size=12)
+    ws.append(["Waybill", "Tipo", "Destinatário", "Telefone", "Produto", "Plataforma", "Vencimento", "Registrado em"])
+    for c in ws[2]:
+        c.font, c.fill = negrito, cinza
+    casos = sorted(casos, key=lambda r: r.get("abortTime") or "")
+    for r in casos:
+        ws.append([r.get("waybillNumber") or r.get("scanNumber"), COMPLAINT_TYPE.get(r.get("complaintType"), "Reclamação"),
+                   r.get("recipientName"), r.get("formatReceiveMobile") or r.get("receiveMobile"), r.get("goodsName"),
+                   r.get("platform"), r.get("abortTime"), r.get("registerTime")])
+    for col, w in zip("ABCDEFGH", (20, 20, 26, 18, 40, 16, 18, 18)):
+        ws.column_dimensions[col].width = w
+    wb.save(caminho)
+
+
 def main():
     import datetime as dt, time
     from zoneinfo import ZoneInfo
@@ -166,6 +193,9 @@ def main():
             sys.exit("_DADOS_BASES.bin ainda vazio: espere a próxima rodada do robô (04h, 14h ou 19h)")
         d = pickle.loads(gzip.decompress(bruto))
         S, B = d["S"], d["B"]
+        acareacoes_por_base = {}
+        for r in d.get("ACAREACOES") or []:
+            acareacoes_por_base.setdefault(r.get("siteName"), []).append(r)
         agora = dt.datetime.now(ZoneInfo("America/Sao_Paulo"))
         if agora.hour >= 10 or S["hoje"].date() >= agora.date() or time.time() > fim:
             break
@@ -212,6 +242,7 @@ def main():
                 p = planilha_base.gerar(base, S, B, tmp / f"{base}.xlsx", anterior)
                 if exped is not None:
                     aba_expedido(p, base, exped)
+                aba_acareacao(p, base, acareacoes_por_base.get(base) or [])
                 s.files().update(fileId=fid, media_body=MediaFileUpload(str(p), mimetype=XLSX, resumable=False),
                                  supportsAllDrives=True).execute()
                 p.unlink(missing_ok=True)

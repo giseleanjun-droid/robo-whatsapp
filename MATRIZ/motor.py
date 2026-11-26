@@ -553,16 +553,33 @@ COLS_LISTA_BL = ["ALERTA", "💸 Perda / Reembolso", "ONDE ESTÁ", "VALIDAÇÃO"
 ORDEM_AL = {AL_URGENTE: 0, AL_PERDA: 1, AL_NO_PRAZO: 2, AL_ROTA: 3, AL_ESTOQUE: 4, AL_OUTRA: 5, AL_OUTROS: 6}
 
 
-def calcular_backlog(df, hoje=None):
+def calcular_backlog(df, hoje=None, perdas_reais=None):
     """
     Devolve dict:
       bases:  DataFrame uma linha por base (total, valor, aging, situação, categorias, perdas, prazos D0..D3)
       ofensores: motoristas em rota (qtd, valor) por base
       prazos_cidades: base x cidade (prazo mais comum + qtd)
       lista: todos os pacotes com a coluna ALERTA
+
+    perdas_reais: {waybill: {"valor": float|None, "data": datetime|None, "tipo": str|None}} vindo do
+    Controle de Perdas de verdade no SRM (lmLossResponsibility - API/srm_api.py), não do texto do export.
+    Quando um waybill está aqui, ele SEMPRE conta como perda (o status/motivo do export pode não ter
+    o registro de POD que gerou a perda - é exatamente o que a Gisele reportou como errado).
     """
     hoje = hoje or agora()
     t = _comum(df, hoje)
+    if perdas_reais:
+        valor_map = {wb: v["valor"] for wb, v in perdas_reais.items() if v.get("valor") is not None}
+        data_map = {wb: v["data"] for wb, v in perdas_reais.items() if v.get("data") is not None}
+        tipo_map = {wb: v["tipo"] for wb, v in perdas_reais.items() if v.get("tipo")}
+        t.loc[t["waybill"].isin(perdas_reais.keys()), "perda"] = True
+        valores_reais = t["waybill"].map(valor_map)
+        t.loc[valores_reais.notna(), "valor"] = valores_reais[valores_reais.notna()]
+        t["perda_data_real"] = pd.to_datetime(t["waybill"].map(data_map))
+        t["perda_tipo_real"] = t["waybill"].map(tipo_map)
+    else:
+        t["perda_data_real"] = pd.NaT
+        t["perda_tipo_real"] = None
     t["validacao"] = _validacao(t)
     vivo = ~t["perda"]
 
@@ -573,7 +590,7 @@ def calcular_backlog(df, hoje=None):
     dias = t["dias"]
     venc = t["pz_diff"] < 0
     # perda deste mês (ainda vai descontar) x perda de mês anterior (já reembolsada - não cobrar o cliente de novo)
-    data_perda = t["ocorrencia"].fillna(t["entrada"])
+    data_perda = t["perda_data_real"].fillna(t["ocorrencia"]).fillna(t["entrada"])
     perda_mes_atual = t["perda"] & (data_perda.dt.year == hoje.year) & (data_perda.dt.month == hoje.month)
     perda_mes_ant = t["perda"] & ~perda_mes_atual
     f = pd.DataFrame({
@@ -627,6 +644,7 @@ def calcular_backlog(df, hoje=None):
     motivo = t["motivo"].where(t["motivo"] != "", None)
     venc_dias = (-t["pz_diff"]).where(venc, 0).fillna(0).astype(int)
     motivo = motivo.where(~(t["perda"] & motivo.isna()), "Vencido há " + venc_dias.astype(str) + " dias (perda por tempo)")
+    motivo = motivo.where(t["perda_tipo_real"].isna(), t["perda_tipo_real"])   # Controle de Perdas de verdade sempre vence
     # mensagem pronta de validação de entrega (padrão da Gisele): nome, AJ, plataforma e loja já vêm do SRM, sem
     # nenhum dado protegido. O telefone NÃO entra aqui: a base cola na planilha (consulta que ela já faz no SRM)
     # e a fórmula da própria planilha monta o link do WhatsApp (ver planilha_base.aba_bl_pacotes).
