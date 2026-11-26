@@ -71,6 +71,24 @@ def exportar_xlsx(svc, fid):
     return buf.getvalue()
 
 
+NOME_CONTATOS_SRM = "anjun-contatos.csv"
+
+
+def ler_contatos_srm(bruto):
+    """CSV exportado pela extensão Anjun Active (TI): Waybill;Telefone, utf-8 com BOM, separado por ';'.
+    Fonte central (vinda do SRM) - substitui o que a base colou manualmente quando o waybill está aqui."""
+    import csv
+    try:
+        linhas = list(csv.reader(io.StringIO(bruto.decode("utf-8-sig")), delimiter=";"))
+        out = {}
+        for row in linhas[1:]:
+            if len(row) >= 2 and row[0].strip() and row[1].strip():
+                out[row[0].strip()] = row[1].strip()
+        return out
+    except Exception:
+        return {}
+
+
 def ler_anterior(bruto):
     """Lê o que a base já preencheu na planilha atual (antes de sobrescrever): telefone colado e resposta do
     cliente marcada, por Waybill. Sem isso, cada regravação automática apagaria o que a base digitou."""
@@ -165,6 +183,16 @@ def main():
         except Exception as e:
             print(f"expedição GO-74: listas não lidas ({e})")
 
+    # contatos do SRM (extensão Anjun Active, do TI): Waybill -> Telefone, para preencher a coluna
+    # "Telefone" sem a base precisar pesquisar no SRM
+    contatos_srm = {}
+    if arquivos.get(NOME_CONTATOS_SRM):
+        try:
+            contatos_srm = ler_contatos_srm(baixar(svc, arquivos[NOME_CONTATOS_SRM]["id"]))
+            print(f"contatos do SRM (Anjun Active): {len(contatos_srm)}")
+        except Exception as e:
+            print(f"contatos do SRM: não lidos ({e})")
+
     so = set(os.environ.get("SO_BASES", "").upper().split())
     alvo = {n[:-len(SUFIXO)].strip().upper(): f["id"] for n, f in arquivos.items() if n.endswith(SUFIXO)}
     if so:
@@ -179,6 +207,8 @@ def main():
             try:
                 s = servico()   # um cliente por thread (o httplib2 não é thread-safe)
                 anterior = ler_anterior(exportar_xlsx(s, fid))
+                for wb, tel in contatos_srm.items():
+                    anterior.setdefault(wb, {})["telefone"] = tel
                 p = planilha_base.gerar(base, S, B, tmp / f"{base}.xlsx", anterior)
                 if exped is not None:
                     aba_expedido(p, base, exped)
