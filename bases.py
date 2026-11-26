@@ -213,15 +213,18 @@ def main():
         except Exception as e:
             print(f"expedição GO-74: listas não lidas ({e})")
 
-    # contatos do SRM (extensão Anjun Active, do TI): Waybill -> Telefone, para preencher a coluna
-    # "Telefone" sem a base precisar pesquisar no SRM
-    contatos_srm = {}
+    # contatos do SRM: Waybill -> Telefone, para preencher a coluna "Telefone" sem a base precisar
+    # pesquisar no SRM. Fonte principal: o robô privado já busca direto na API (d["CONTATOS"]).
+    # CSV do Anjun Active (extensão do TI) fica como reforço/atalho manual quando alguém exportar um.
+    contatos_srm = dict(d.get("CONTATOS") or {})
+    print(f"contatos do SRM (API): {len(contatos_srm)}")
     if arquivos.get(NOME_CONTATOS_SRM):
         try:
-            contatos_srm = ler_contatos_srm(baixar(svc, arquivos[NOME_CONTATOS_SRM]["id"]))
-            print(f"contatos do SRM (Anjun Active): {len(contatos_srm)}")
+            do_csv = ler_contatos_srm(baixar(svc, arquivos[NOME_CONTATOS_SRM]["id"]))
+            contatos_srm.update(do_csv)
+            print(f"contatos do SRM (Anjun Active, CSV manual): {len(do_csv)}")
         except Exception as e:
-            print(f"contatos do SRM: não lidos ({e})")
+            print(f"contatos do SRM (CSV manual): não lidos ({e})")
 
     so = set(os.environ.get("SO_BASES", "").upper().split())
     alvo = {n[:-len(SUFIXO)].strip().upper(): f["id"] for n, f in arquivos.items() if n.endswith(SUFIXO)}
