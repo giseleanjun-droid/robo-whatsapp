@@ -567,6 +567,20 @@ def calcular_backlog(df, hoje=None, perdas_reais=None):
     o registro de POD que gerou a perda - é exatamente o que a Gisele reportou como errado).
     """
     hoje = hoje or agora()
+    bruto_base = _txt(_col(df, "pontoresponsavel")).str.upper()
+    preso = bruto_base.notna() & (bruto_base != "") & ~_base_valida(bruto_base)
+    if preso.any():
+        preso_hub = pd.DataFrame({
+            "uf": bruto_base[preso].str[:2], "hub": bruto_base[preso],
+            "waybill": _txt(_col(df, "numerodowaybill", "waybill"))[preso],
+            "cidade": _txt(_col(df, "cidadedodestinatario")).str.upper().replace("", "N/D")[preso],
+            "valor": _valor(_col(df, "valordeclarado"))[preso],
+            "entrada": _data(_col(df, "tempodeentradanoponto", "tempodeentrada"))[preso],
+        })
+        preso_hub["dias_parado"] = _dias_corridos(preso_hub["entrada"], hoje).fillna(0).clip(lower=0).astype(int)
+        preso_hub = preso_hub.sort_values("dias_parado", ascending=False).reset_index(drop=True)
+    else:
+        preso_hub = pd.DataFrame(columns=["uf", "hub", "waybill", "cidade", "valor", "entrada", "dias_parado"])
     t = _comum(df, hoje)
     if perdas_reais:
         valor_map = {wb: v["valor"] for wb, v in perdas_reais.items() if v.get("valor") is not None}
@@ -688,4 +702,4 @@ def calcular_backlog(df, hoje=None, perdas_reais=None):
                            "dias": pe["dias"], "status": pe["status"],
                            "dia": pe["ocorrencia"].fillna(pe["entrada"]).dt.strftime("%Y-%m-%d").fillna("")}).reset_index(drop=True)
     return {"bases": bases, "ofensores": ofensores, "prazos_cidades": pc, "nao_pertence": nao_pertence, "perdas": perdas,
-            "lista": lista.reset_index(drop=True), "hoje": hoje, "linhas_bd": len(df)}
+            "lista": lista.reset_index(drop=True), "hoje": hoje, "linhas_bd": len(df), "preso_hub": preso_hub}
