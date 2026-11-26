@@ -58,6 +58,13 @@ def main():
             idade_min = 9999
         if idade_min > 90:
             return sem_novidade(f"pré-alerta desatualizado (gerado {m.get('gerado')}, {idade_min:.0f} min atrás)")
+        # dedup: se o Painel HUB ainda não rodou de novo desde o último disparo (ex.: alguém testou na mão
+        # entre dois ciclos automáticos do Despertador), o arquivo é o MESMO - sem isso manda a msg repetida.
+        marca = AQUI / "agora_anterior.txt"
+        chave = f"{m.get('ini')}|{m.get('fim')}"
+        if marca.exists() and marca.read_text(encoding="utf-8").strip() == chave:
+            return sem_novidade(f"já enviado este lote (ini {m.get('ini')} · fim {m.get('fim')})")
+        (AQUI / "agora_marca.txt").write_text(chave, encoding="utf-8")
     else:
         hoje = agora.strftime("%Y-%m-%d")
         if m.get("dia") != hoje or m.get("turno") != turno:
