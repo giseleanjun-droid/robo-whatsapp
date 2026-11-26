@@ -80,14 +80,6 @@ jobs:
           key: wa-exped-${{ steps.dia.outputs.data }}-${{ steps.dia.outputs.turno }}
           lookup-only: true
 
-      - name: Recuperar último pré-alerta já enviado (evita reenviar o mesmo lote)
-        if: env.MODO == 'expedicao' && github.event.inputs.turno == 'agora'
-        uses: actions/cache/restore@v4
-        with:
-          path: agora_anterior.txt
-          key: wa-agora-ultimo-${{ github.run_id }}
-          restore-keys: wa-agora-ultimo-
-
       - name: Parar (a expedição deste turno já foi enviada)
         if: steps.marcaexp.outputs.cache-hit == 'true'
         run: echo "Expedição deste turno já enviada. Nada a fazer." && echo "JA_ENVIOU=1" >> "$GITHUB_ENV"
@@ -146,6 +138,14 @@ jobs:
           else
             echo "sem sessão guardada (vai precisar parear)"
           fi
+
+      - name: Recuperar último pré-alerta já enviado (evita reenviar o mesmo lote)
+        if: env.JA_ENVIOU != '1' && env.MODO == 'expedicao' && github.event.inputs.turno == 'agora'
+        uses: actions/cache/restore@v4
+        with:
+          path: agora_anterior.txt
+          key: wa-agora-ultimo-${{ github.run_id }}
+          restore-keys: wa-agora-ultimo-
 
       - name: Ler a matriz do dia
         if: env.JA_ENVIOU != '1' && env.MODO != 'parear' && env.MODO != 'vigia'
